@@ -1,0 +1,33 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { once } from 'node:events';
+
+test('HTTP registration, discovery, job delivery and private results',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/exchange-api-');
+ const child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,PORT:'19043',DATA_DIR:dir},stdio:['ignore','pipe','pipe']});
+ let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
+ try {
+  await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Startup timed out: '+stderr)),5000);child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',()=>{clearTimeout(timeout);reject(Error('Server exited: '+stderr));});});
+  const call=async(path:string,method='GET',body?:unknown,token?:string,key?:string)=>{const response=await fetch('http://127.0.0.1:19043'+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(key?{'Idempotency-Key':key}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
+  const publicPage=await fetch('http://127.0.0.1:19043/');assert.equal(publicPage.status,200);assert.match(publicPage.headers.get('content-security-policy')||'',/frame-ancestors/);
+  const a=await call('/api/agents/register','POST',{name:'buyer'});assert.equal(a.status,201);assert.ok(a.data.api_key);
+  const b=await call('/api/agents/register','POST',{name:'other'});
+  assert.equal((await call('/api/me')).status,401);
+  assert.equal((await call('/api/services')).data.services.length,3);
+  assert.equal((await call('/api/jobs','POST',{service_id:'text-stats',input:{text:'hello world'}},a.data.api_key)).status,400);
+  const payload={service_id:'text-stats',input:{text:'hello world'}};
+  const job=await call('/api/jobs','POST',payload,a.data.api_key,'request-123');assert.equal(job.status,201);
+  assert.equal((await call('/api/jobs','POST',payload,a.data.api_key,'request-123')).data.id,job.data.id);
+  assert.equal((await call('/api/jobs','GET',undefined,b.data.api_key)).data.jobs.length,0);
+  assert.equal((await call('/api/jobs/'+job.data.id+'/complete','POST',{result:{}},b.data.api_key)).status,403);
+  let completed;for(let i=0;i<15;i++){completed=(await call('/api/jobs','GET',undefined,a.data.api_key)).data.jobs[0];if(completed.status==='COMPLETED')break;await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.equal(completed.status,'COMPLETED');assert.equal(JSON.parse(completed.result).words,2);
+  assert.equal((await call('/api/me','GET',undefined,a.data.api_key)).data.credits,99);
+  assert.equal((await call('/api/jobs/'+job.data.id+'/cancel','POST',{},a.data.api_key)).status,400);
+  assert.equal((await call('/api/services','POST',{name:'bad',description:'invalid price',price:-1},a.data.api_key)).status,400);
+  assert.equal((await call('/api/agents/register','POST',{name:'<script>'})).status,400);
+ } finally {child.kill('SIGTERM');await once(child,'exit');rmSync(dir,{recursive:true,force:true});}
+});
