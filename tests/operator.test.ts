@@ -18,3 +18,10 @@ test('model adapters send bounded nonstreaming requests and parse outputs',async
  const openai=async(url:any,init:any)=>{assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(init.body);assert.equal(body.store,false);assert.equal(body.max_output_tokens,1200);assert.equal(init.headers.Authorization,'Bearer test-key');return new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'result'}]}]}));};
  assert.equal((await generate({provider:'openai',model:'test',openaiKey:'test-key'},'ai-rewrite','input',openai as typeof fetch)).text,'result');
 });
+
+test('provider failure diagnostics retain safe codes and hide messages',async()=>{
+ const fake=async()=>new Response(JSON.stringify({error:{code:'insufficient_quota',message:'private account information'}}),{status:429});
+ await assert.rejects(()=>generate({provider:'openai',model:'test',openaiKey:'secret-key'},'ai-summary','input',fake as typeof fetch),{message:'insufficient_quota'});
+ const unknown=async()=>new Response(JSON.stringify({error:{code:'secret-key',message:'private'}}),{status:401});
+ await assert.rejects(()=>generate({provider:'openai',model:'test',openaiKey:'secret-key'},'ai-summary','input',unknown as typeof fetch),{message:'http_401'});
+});

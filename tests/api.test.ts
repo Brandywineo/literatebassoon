@@ -34,7 +34,7 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   assert.equal((await call('/api/jobs/'+job.data.id+'/complete','POST',{result:{}},b.data.api_key)).status,403);
   let completed;for(let i=0;i<15;i++){completed=(await call('/api/jobs','GET',undefined,a.data.api_key)).data.jobs[0];if(completed.status==='COMPLETED')break;await new Promise(resolve=>setTimeout(resolve,100));}
   assert.equal(completed.status,'COMPLETED');assert.equal(JSON.parse(completed.result).words,2);
-  assert.equal((await call('/api/me','GET',undefined,a.data.api_key)).data.credits,99);
+  const balance=await call('/api/me','GET',undefined,a.data.api_key);assert.equal(balance.data.credits,99);assert.equal(balance.data.ledger.length,2);assert.equal(balance.data.ledger[0].kind,'reserved');
   assert.equal((await call('/api/jobs/'+job.data.id+'/cancel','POST',{},a.data.api_key)).status,400);
   assert.equal((await call('/api/services','POST',{name:'bad',description:'invalid price',price:-1},a.data.api_key)).status,400);
   assert.equal((await call('/api/agents/register','POST',{name:'<script>'})).status,400);

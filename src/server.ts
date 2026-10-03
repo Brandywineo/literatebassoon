@@ -40,7 +40,7 @@ const server=createServer(async(req,res)=>{
         services:store.db.prepare('SELECT s.*,a.name AS provider FROM services s LEFT JOIN agents a ON a.id=s.provider_id ORDER BY s.rowid DESC LIMIT 200').all(),
         jobs:store.db.prepare('SELECT j.id,j.status,j.price,j.created_at,s.name AS service,a.name AS buyer FROM jobs j JOIN services s ON s.id=j.service_id JOIN agents a ON a.id=j.buyer_id ORDER BY j.rowid DESC LIMIT 100').all(),
         revenue:store.db.prepare("SELECT coalesce(sum(amount),0) AS credits FROM ledger WHERE kind='platform_test_revenue'").get()?.credits,
-        runs:store.db.prepare('SELECT id,job_id,provider,model,status,created_at FROM operator_runs ORDER BY rowid DESC LIMIT 30').all(),
+        runs:store.db.prepare('SELECT id,job_id,provider,model,status,error_code,created_at FROM operator_runs ORDER BY rowid DESC LIMIT 30').all(),
         audit:store.db.prepare('SELECT action,target,created_at FROM admin_audit ORDER BY rowid DESC LIMIT 30').all()
       });
       if(method==='POST'&&path==='/api/admin/operator') {const b=await body(req);if(typeof b.enabled!=='boolean'||!['ollama','openai'].includes(b.provider))throw new Error('Invalid operator settings');const model=str(b.model,0,100,'Model');if(b.enabled&&!model.trim())throw new Error('Configure a model before enabling');if(b.enabled&&b.provider==='openai'&&!process.env.OPENAI_API_KEY)throw new Error('Set OPENAI_API_KEY in the private environment file first');const daily=integer(b.daily_limit);if(daily<1||daily>500)throw new Error('Daily request limit must be 1–500');store.setOperator(b.enabled,b.provider,model,daily);return send(res,200,{ok:true});}
@@ -57,7 +57,7 @@ const server=createServer(async(req,res)=>{
     const token=req.headers.authorization?.replace(/^Bearer /,'');
     const agent=token?store.db.prepare(`SELECT id,name,description,credits,created_at FROM agents WHERE token_hash=? AND disabled=0`).get(hash(token)):undefined;
     if(!agent) return send(res,401,{error:'A valid Bearer API key is required'});
-    if(method==='GET'&&path==='/api/me') return send(res,200,{...agent,credit_type:'test_only',ledger:store.db.prepare(`SELECT amount,kind,job_id,created_at FROM ledger WHERE agent_id=? ORDER BY rowid DESC LIMIT 100`).all()});
+    if(method==='GET'&&path==='/api/me') return send(res,200,{...agent,credit_type:'test_only',ledger:store.db.prepare(`SELECT amount,kind,job_id,created_at FROM ledger WHERE agent_id=? ORDER BY rowid DESC LIMIT 100`).all(agent.id)});
     if(method==='POST'&&path==='/api/services') {const b=await body(req),id=crypto.randomUUID();store.db.prepare(`INSERT INTO services(id,provider_id,name,description,category,price) VALUES(?,?,?,?,?,?)`).run(id,agent.id,str(b.name,3,80,'Name'),str(b.description,10,1000,'Description'),str(b.category||'Other',1,40,'Category'),integer(b.price));return send(res,201,{id});}
     if(method==='GET'&&path==='/api/jobs') return send(res,200,{jobs:store.db.prepare(`SELECT j.*,s.name AS service_name,a.name AS buyer_name,s.provider_id FROM jobs j JOIN services s ON s.id=j.service_id JOIN agents a ON a.id=j.buyer_id WHERE j.buyer_id=? OR s.provider_id=? ORDER BY j.rowid DESC LIMIT 100`).all(agent.id,agent.id)});
     if(method==='POST'&&path==='/api/jobs') {const b=await body(req),key=str(req.headers['idempotency-key'],8,100,'Idempotency-Key');const text=str(b.input?.text,0,40000,'Input text');return send(res,201,store.submit(String(agent.id),str(b.service_id,1,80,'Service ID'),JSON.stringify({text}),key));}

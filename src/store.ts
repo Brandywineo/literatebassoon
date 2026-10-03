@@ -24,6 +24,7 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS operator_state(id INTEGER PRIMARY KEY CHECK(id=1),heartbeat INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'offline');
     INSERT OR IGNORE INTO operator_state(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS admin_audit(id TEXT PRIMARY KEY,action TEXT NOT NULL,target TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+  column('operator_runs','error_code','TEXT');
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']
@@ -102,8 +103,8 @@ export function openStore(dir: string) {
     db.prepare("INSERT INTO operator_runs(id,job_id,provider,model,status) VALUES(?,?,?,?,'RUNNING')").run(run,job.id,cfg.provider,cfg.model);
     return {...job,token,run,provider:String(cfg.provider),model:String(cfg.model)};
   });}
-  function finishAI(job:any,status:'COMPLETED'|'FAILED'){return transaction(()=>{
-    db.prepare('UPDATE operator_runs SET status=? WHERE id=?').run(status,job.run);
+  function finishAI(job:any,status:'COMPLETED'|'FAILED',errorCode:string|null=null){return transaction(()=>{
+    db.prepare('UPDATE operator_runs SET status=?,error_code=? WHERE id=?').run(status,errorCode,job.run);
   });}
   function setOperator(enabled:boolean,provider:string,model:string,dailyLimit:number){transaction(()=>{
     db.prepare('UPDATE operator_settings SET enabled=?,provider=?,model=?,daily_limit=? WHERE id=1').run(enabled?1:0,provider,model,dailyLimit);

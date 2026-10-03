@@ -1,5 +1,5 @@
 import { openStore } from './store.ts';
-import { generate } from './models.ts';
+import { generate, ModelError } from './models.ts';
 import { pathToFileURL } from 'node:url';
 
 export async function runOne(store:ReturnType<typeof openStore>,generateText=generate){
@@ -8,10 +8,12 @@ export async function runOne(store:ReturnType<typeof openStore>,generateText=gen
     const result=await generateText({provider:job.provider,model:job.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},String(job.builtin),JSON.parse(String(job.input)).text);
     store.settle(String(job.id),'COMPLETED',JSON.stringify(result),undefined,String(job.token));
     store.finishAI(job,'COMPLETED');
-  }catch{
+  }catch(error){
+    const code=error instanceof ModelError ? error.message : error instanceof Error && error.name==='TimeoutError' ? 'timeout' : 'processing_error';
+    console.error(`Kestrel request failed: ${code}; job ${job.id}`);
     const row=store.db.prepare('SELECT status,claim_token FROM jobs WHERE id=?').get(job.id);
     if(row?.status==='QUEUED'&&row.claim_token===job.token)store.settle(String(job.id),'FAILED',JSON.stringify({error:'Kestrel could not complete this job. Test credits refunded.'}),undefined,String(job.token));
-    store.finishAI(job,'FAILED');
+    store.finishAI(job,'FAILED',code);
   }
   return true;
 }

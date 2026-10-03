@@ -1,3 +1,12 @@
+export class ModelError extends Error {
+  constructor(publicCode:string){super(publicCode);this.name='ModelError';}
+}
+async function readModelJSON(response:Response){
+  const reader=response.body?.getReader();if(!reader)throw new ModelError('empty_response');
+  let bytes=0;const chunks:Uint8Array[]=[];
+  while(true){const {value,done}=await reader.read();if(done)break;bytes+=value.length;if(bytes>262144){await reader.cancel();throw new ModelError('response_too_large');}chunks.push(value);}
+  return JSON.parse(Buffer.concat(chunks).toString());
+}
 export type ModelConfig={provider:string;model:string;ollamaUrl?:string;openaiKey?:string};
 export async function generate(config:ModelConfig,task:string,text:string,fetcher:typeof fetch=fetch){
   if(text.length>12000)throw new Error('AI input exceeds 12000 characters');
@@ -12,14 +21,15 @@ export async function generate(config:ModelConfig,task:string,text:string,fetche
     if(!config.openaiKey)throw new Error('OpenAI key is not configured');
     response=await fetcher('https://api.openai.com/v1/responses',{...request,headers:{...request.headers,Authorization:'Bearer '+config.openaiKey},body:JSON.stringify({model:config.model,instructions,input:text,max_output_tokens:1200,store:false})});
   }else throw new Error('Unknown model provider');
-  if(!response.ok)throw new Error(`Model request failed (${response.status})`);
-  // Limit decoded output before parsing; provider error bodies and credentials are never logged.
-  const reader=response.body?.getReader();if(!reader)throw new Error('Model returned no response');
-  let bytes=0;const chunks:Uint8Array[]=[];
-  while(true){const {value,done}=await reader.read();if(done)break;bytes+=value.length;if(bytes>262144){await reader.cancel();throw new Error('Model response exceeds limit');}chunks.push(value);}
-  const result=JSON.parse(Buffer.concat(chunks).toString());
+  if(!response.ok){
+    let data:any;try{data=await readModelJSON(response);}catch{}
+    const allowed=['insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','billing_hard_limit_reached'];
+    const code=allowed.includes(data?.error?.code)?data.error.code:`http_${response.status}`;
+    throw new ModelError(code);
+  }
+  const result=await readModelJSON(response);
   const output=config.provider==='ollama'?result.message?.content:result.output?.filter((item:any)=>item.type==='message').flatMap((item:any)=>item.content||[]).filter((item:any)=>item.type==='output_text').map((item:any)=>item.text).join('\n');
-  if(typeof output!=='string'||!output.trim()||output.length>20000)throw new Error('Model returned no usable text');
-  if(config.provider==='openai'&&result.status!=='completed')throw new Error('Model response did not finish');
+  if(typeof output!=='string'||!output.trim()||output.length>20000)throw new ModelError('empty_response');
+  if(config.provider==='openai'&&result.status!=='completed')throw new ModelError('incomplete_response');
   return {text:output,provider:config.provider,model:config.model};
 }
