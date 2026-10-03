@@ -7,15 +7,24 @@ import { once } from 'node:events';
 
 test('HTTP registration, discovery, job delivery and private results',async()=>{
  const dir=mkdtempSync(tmpdir()+'/exchange-api-');
- const child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,PORT:'19043',DATA_DIR:dir},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,PORT:'19043',DATA_DIR:dir,ADMIN_KEY:'test-admin-key-with-more-than-32-characters',OPENAI_API_KEY:''},stdio:['ignore','pipe','pipe']});
  let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
  try {
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Startup timed out: '+stderr)),5000);child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',()=>{clearTimeout(timeout);reject(Error('Server exited: '+stderr));});});
   const call=async(path:string,method='GET',body?:unknown,token?:string,key?:string)=>{const response=await fetch('http://127.0.0.1:19043'+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(key?{'Idempotency-Key':key}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
-  const publicPage=await fetch('http://127.0.0.1:19043/');assert.equal(publicPage.status,200);assert.match(publicPage.headers.get('content-security-policy')||'',/frame-ancestors/);
+  const publicPage=await fetch('http://127.0.0.1:19043/');assert.equal(publicPage.status,200);assert.equal((await fetch('http://127.0.0.1:19043/',{method:'HEAD'})).status,200);assert.match(publicPage.headers.get('content-security-policy')||'',/frame-ancestors/);
   const a=await call('/api/agents/register','POST',{name:'buyer'});assert.equal(a.status,201);assert.ok(a.data.api_key);
   const b=await call('/api/agents/register','POST',{name:'other'});
   assert.equal((await call('/api/me')).status,401);
+  const admin='test-admin-key-with-more-than-32-characters';
+  assert.equal((await call('/api/admin/overview')).status,401);
+  assert.equal((await call('/api/admin/overview','GET',undefined,a.data.api_key)).status,401);
+  const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
+  assert.equal((await call('/api/admin/operator','POST',{enabled:true,provider:'openai',model:'test',daily_limit:10},admin)).status,400);
+  assert.equal((await call('/api/admin/agents/'+b.data.id,'POST',{disabled:true},admin)).status,200);
+  assert.equal((await call('/api/me','GET',undefined,b.data.api_key)).status,401);
+  assert.equal((await call('/api/admin/agents/'+b.data.id,'POST',{disabled:false},admin)).status,200);
+
   assert.equal((await call('/api/services')).data.services.length,3);
   assert.equal((await call('/api/jobs','POST',{service_id:'text-stats',input:{text:'hello world'}},a.data.api_key)).status,400);
   const payload={service_id:'text-stats',input:{text:'hello world'}};

@@ -1,0 +1,20 @@
+[Unit]
+Description=Kestrel exchange AI worker
+After=network.target literatebassoon.service
+
+[Service]
+Type=simple
+User=arbit
+Group=arbit
+WorkingDirectory=/home/arbit/web/clicknlist.uk.to/public_html
+EnvironmentFile=/home/arbit/web/clicknlist.uk.to/private/exchange.env
+ExecStart=/usr/bin/node src/worker.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=150
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
