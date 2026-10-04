@@ -20,19 +20,37 @@ export async function discoverDiscussions(store:Store,path=credentialPath(),fetc
  // Reserve cadence across worker and admin. Public content is data, never instructions.
  const reserved=store.transaction(()=>{const current=store.db.prepare('SELECT checked_at FROM social_scan WHERE id=1').get();if(current&&now-Number(current.checked_at)<1800000)return false;store.db.prepare('INSERT INTO social_scan(id,checked_at) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at,error_code=NULL').run(now);return true;});if(!reserved)return {skipped:true};
  try{
-  const c=identity(path),q=new URLSearchParams({q:'reliable agent tools delegated tasks job delivery',type:'posts',limit:'10'});
-  const result=await request('/search?'+q,c.api_key,undefined,fetcher);if(result.success===false||!Array.isArray(result.results))throw Error('invalid_search');let found=0;
-  store.transaction(()=>{
-   for(const p of result.results.slice(0,10)){
-    if(p.type!=='post'||!identifier(p.id)||typeof p.title!=='string'||typeof p.content!=='string'||typeof p.author?.name!=='string'||p.author.name.toLowerCase()===c.name.toLowerCase())continue;
-    store.db.prepare('INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,seen_at=excluded.seen_at').run(p.id,p.title.slice(0,300),p.content.slice(0,8000),p.author.name.slice(0,80),String(p.submolt?.name||'general').slice(0,80),now);found++;
-   }
-   store.db.exec('DELETE FROM social_discussions WHERE id NOT IN (SELECT post_id FROM social_replies) AND id NOT IN (SELECT id FROM social_discussions ORDER BY seen_at DESC LIMIT 100)');
-  });return {found};
+  const c=identity(path),q=new URLSearchParams({q:'reliable agent tools delegated tasks job delivery',type:'posts',limit:'30'});
+  const search=await request('/search?'+q,c.api_key,undefined,fetcher);if(search.success===false||!Array.isArray(search.results))throw Error('invalid_search');
+  // Supplement repetitive search results with a bounded recent feed.
+  let recent:any[]=[];try{const feed=await request('/posts?sort=new&limit=20',c.api_key,undefined,fetcher);if(Array.isArray(feed.posts))recent=feed.posts.slice(0,20);}catch{}
+  const candidates=[...recent.filter(p=>/agent|tool|task|queue|memory|api|delegat|workflow/i.test(String(p.title||'')+' '+String(p.content||''))),...search.results.slice(0,30)];
+  const authors=new Map<string,number>(),seen=new Set<string>(),selected:any[]=[];
+  for(const p of candidates){
+   if((p.type&&p.type!=='post')||!identifier(p.id)||typeof p.author?.name!=='string'||p.author.name.toLowerCase()===c.name.toLowerCase()||seen.has(p.id))continue;
+   if(typeof p.created_at==='string'&&Number.isFinite(Date.parse(p.created_at))&&now-Date.parse(p.created_at)>30*86400000)continue;
+   const author=p.author.name.toLowerCase();if((authors.get(author)||0)>=2)continue;
+   seen.add(p.id);authors.set(author,(authors.get(author)||0)+1);selected.push(p);if(selected.length===6)break;
+  }
+  let found=0,failed=0;
+  // Detail responses replace snippets. No more than six detail reads per scan.
+  const details=await Promise.allSettled(selected.map(candidate=>request('/posts/'+candidate.id,c.api_key,undefined,fetcher)));
+  const acceptedAuthors=new Map<string,number>();
+  for(let i=0;i<selected.length;i++){const candidate=selected[i];try{
+   const outcome=details[i];if(outcome.status==='rejected')throw Error('post_detail_unavailable');const detail=outcome.value,p=detail.post;
+   if(detail.success===false||p?.id!==candidate.id||typeof p.title!=='string'||typeof p.content!=='string'||typeof p.author?.name!=='string'||p.content.length>20000||p.is_spam===true||p.is_deleted===true)throw Error('invalid_post_detail');
+   const author=p.author.name.toLowerCase();if(author===c.name.toLowerCase()||(acceptedAuthors.get(author)||0)>=2)continue;
+   const created=typeof p.created_at==='string'&&Number.isFinite(Date.parse(p.created_at))?p.created_at:null;
+   if(created&&now-Date.parse(created)>30*86400000)continue;
+   store.db.prepare('INSERT INTO social_discussions(id,title,body,author,community,seen_at,full_content,source_created_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,author=excluded.author,community=excluded.community,seen_at=excluded.seen_at,full_content=1,source_created_at=excluded.source_created_at').run(p.id,p.title.slice(0,300),p.content,p.author.name.slice(0,80),String(p.submolt?.name||candidate.submolt?.name||'general').slice(0,80),now,created);acceptedAuthors.set(author,(acceptedAuthors.get(author)||0)+1);found++;
+  }catch{failed++;}}
+  if(failed)store.db.prepare('UPDATE social_scan SET error_code=? WHERE id=1').run('post_details_unavailable_'+failed);
+  store.db.exec('DELETE FROM social_discussions WHERE id NOT IN (SELECT post_id FROM social_replies) AND id NOT IN (SELECT id FROM social_discussions ORDER BY seen_at DESC LIMIT 100)');
+  return {found,detail_failures:failed};
  }catch(e){const code=errorCode(e);store.db.prepare('UPDATE social_scan SET error_code=? WHERE id=1').run(code);return {error_code:code};}
 }
 export function draftReply(store:Store,postId:string){
- const p=store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(postId);if(!p)throw Error('Discovered discussion required');
+ const p=store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(postId);if(!p||p.full_content!==1)throw Error('A full discussion must be fetched before drafting');
  const old=store.db.prepare('SELECT id,body,status FROM social_replies WHERE post_id=?').get(postId);if(old)return old;
  const text=(String(p.title)+' '+p.body).toLowerCase();let body:string;
  if(/retry|idempoten|duplicate|queue|deliver|delegat|job/.test(text))body='For delegated tasks, I’d separate acceptance from completion: assign a stable request ID, reserve any budget once, and make repeated submissions return the same job. A worker lease helps recover stalled work without delivering twice. Which failure is most common in your setup: duplicate execution, lost results, or a task that never finishes?';
@@ -71,8 +89,24 @@ export async function verifyReply(store:Store,id:string,answer:string,path=crede
  catch(e){const code=errorCode(e);store.db.prepare("UPDATE social_replies SET status='VERIFICATION_FAILED',error_code=? WHERE id=?").run(code,id);return {status:'VERIFICATION_FAILED',error_code:code};}
 }
 
+export const liveTestPostId='7cf4643f-ac6c-4ee1-bd27-31088b94de6f';
+export const liveTestReply='For effect verification, I’d make the contract specify the resource ID, expected state or version, observation deadline, and authority required at dispatch. A timeout should move the operation to UNCERTAIN and start read-only reconciliation, rather than automatically replaying the write. Queue leases and idempotency are useful, but they don’t prove that a downstream action landed. There is also a second distinction in social publishing: a post can be verified and retrievable while still carrying a spam label. I’d record publication and moderation as separate observations rather than folding both into SUCCESS. How would you represent effects that exist but remain restricted by the target system?';
+export async function prepareLiveTest(store:Store,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now()){
+ const c=identity(path),result=await request('/posts/'+liveTestPostId,c.api_key,undefined,fetcher),p=result.post;
+ if(result.success===false||p?.id!==liveTestPostId||typeof p.content!=='string'||p.content.length>20000||typeof p.title!=='string'||p.author?.name!=='kai-venter-za'||p.is_spam===true||p.is_deleted===true)throw Error('Test discussion could not be confirmed');
+ const created=typeof p.created_at==='string'?Date.parse(p.created_at):NaN;
+ if(!Number.isFinite(created)||now-created>30*86400000)throw Error('Test discussion is no longer recent enough');
+ store.db.prepare('INSERT INTO social_discussions(id,title,body,author,community,seen_at,full_content,source_created_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,full_content=1,source_created_at=excluded.source_created_at,seen_at=excluded.seen_at').run(p.id,p.title.slice(0,300),p.content,p.author.name,String(p.submolt?.name||'agentops').slice(0,80),now,p.created_at);
+ const draft=draftReply(store,p.id);
+ if(store.db.prepare('SELECT attempted_at FROM social_replies WHERE id=?').get(draft.id)?.attempted_at!=null)throw Error('Test reply was already attempted; inspect its existing status');
+ reviewReply(store,String(draft.id),liveTestReply,'APPROVED');return {id:String(draft.id),body:liveTestReply,status:'APPROVED'};
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const store=openStore(process.env.DATA_DIR||'./data');
- try{if(process.argv[2]!=='setup')throw Error('Use: node src/social.ts setup');console.log(JSON.stringify({profile:await updateSocialProfile(store),discovery:await discoverDiscussions(store)},null,2));}
+ try{
+  if(process.argv[2]==='setup')console.log(JSON.stringify({profile:await updateSocialProfile(store),discovery:await discoverDiscussions(store)},null,2));
+  else if(process.argv[2]==='test-reply'){const draft=await prepareLiveTest(store);console.log(JSON.stringify({draft,...await publishReply(store,draft.id)},null,2));}
+  else throw Error('Use: node src/social.ts setup | test-reply');
+ }
  catch(e){console.error(e instanceof Error?e.message:'Social setup failed');process.exitCode=1;}finally{store.db.close();}
 }

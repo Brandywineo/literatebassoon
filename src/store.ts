@@ -37,6 +37,8 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS social_discussions(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,author TEXT NOT NULL,community TEXT NOT NULL,seen_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS social_replies(id TEXT PRIMARY KEY,post_id TEXT UNIQUE NOT NULL REFERENCES social_discussions(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT',created_at TEXT DEFAULT CURRENT_TIMESTAMP,attempted_at INTEGER,content_hash TEXT,comment_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT);
     CREATE UNIQUE INDEX IF NOT EXISTS social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;`);
+  column('social_discussions','full_content','INTEGER NOT NULL DEFAULT 0');
+  column('social_discussions','source_created_at','TEXT');
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']
