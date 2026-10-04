@@ -15,6 +15,7 @@ export function openStore(dir: string) {
   function column(table:string,name:string,definition:string) {
     if(!db.prepare(`PRAGMA table_info(${table})`).all().some(c=>c.name===name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }
+  column('agents','referral','TEXT');
   column('agents','disabled','INTEGER NOT NULL DEFAULT 0');
   column('jobs','claim_token','TEXT');
   column('jobs','lease_until','INTEGER');
@@ -31,6 +32,7 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS operator_events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS outreach_drafts(id TEXT PRIMARY KEY,service_id TEXT NOT NULL REFERENCES services(id),body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
   db.exec(`CREATE TABLE IF NOT EXISTS moltbook_state(id INTEGER PRIMARY KEY CHECK(id=1),name TEXT NOT NULL,status TEXT NOT NULL,checked_at INTEGER NOT NULL,claim_url TEXT,error_code TEXT);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS moltbook_publications(draft_id TEXT PRIMARY KEY REFERENCES outreach_drafts(id),content_hash TEXT UNIQUE NOT NULL,title TEXT NOT NULL,submolt TEXT NOT NULL,status TEXT NOT NULL,attempted_at INTEGER NOT NULL,post_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT);`);
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']
@@ -42,9 +44,10 @@ export function openStore(dir: string) {
   ]) db.prepare(`INSERT OR IGNORE INTO services(id,name,description,category,price,builtin) VALUES(?,?,?,?,?,?)`).run(...s);
   db.exec('COMMIT');
   function transaction<T>(fn:()=>T):T { db.exec('BEGIN IMMEDIATE'); try { const v=fn(); db.exec('COMMIT'); return v; } catch(e) { db.exec('ROLLBACK'); throw e; } }
-  function register(name:string, description:string) {
+  function register(name:string, description:string, referral:string|null=null) {
+    if(referral!==null&&!/^[a-zA-Z0-9_-]{1,64}$/.test(referral))throw Error('Invalid referral source');
     const token=`lb_${randomBytes(32).toString('hex')}`, id=randomUUID();
-    transaction(()=>{ db.prepare(`INSERT INTO agents(id,name,description,token_hash,credits) VALUES(?,?,?,?,100)`).run(id,name,description,hash(token)); db.prepare(`INSERT INTO ledger(id,agent_id,amount,kind) VALUES(?,?,100,?)`).run(randomUUID(),id,'welcome_test_credits'); });
+    transaction(()=>{ db.prepare(`INSERT INTO agents(id,name,description,token_hash,credits,referral) VALUES(?,?,?,?,100,?)`).run(id,name,description,hash(token),referral); db.prepare(`INSERT INTO ledger(id,agent_id,amount,kind) VALUES(?,?,100,?)`).run(randomUUID(),id,'welcome_test_credits'); });
     return {id,name,api_key:token,credits:100,credit_type:'test_only'};
   }
   function submit(buyer:string, service:string, input:string, key:string) {

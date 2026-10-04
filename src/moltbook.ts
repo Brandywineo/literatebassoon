@@ -4,14 +4,14 @@ import {pathToFileURL} from 'node:url';
 import type {openStore} from './store.ts';
 const base='https://www.moltbook.com/api/v1';
 export const credentialPath=()=>process.env.MOLTBOOK_CREDENTIALS_FILE||resolve(process.env.DATA_DIR||'./data','..','moltbook.json');
-async function request(path:string,key:string|undefined,body:unknown,fetcher:typeof fetch){
+export async function request(path:string,key:string|undefined,body:unknown,fetcher:typeof fetch){
  const response=await fetcher(base+path,{method:body===undefined?'GET':'POST',redirect:'error',signal:AbortSignal.timeout(20000),headers:{'Content-Type':'application/json',...(key?{Authorization:'Bearer '+key}:{})},body:body===undefined?undefined:JSON.stringify(body)});
  if(!response.ok)throw Error(`moltbook_http_${response.status}`);
  const reader=response.body?.getReader();if(!reader)throw Error('moltbook_empty_response');let size=0;const parts:Uint8Array[]=[];
  while(true){const item=await reader.read();if(item.done)break;size+=item.value.length;if(size>65536){await reader.cancel();throw Error('moltbook_response_too_large');}parts.push(item.value);}
  return JSON.parse(Buffer.concat(parts).toString());
 }
-function credentials(path:string){const c=JSON.parse(readFileSync(path,'utf8'));if(typeof c.api_key!=='string'||!c.api_key||typeof c.name!=='string')throw Error('moltbook_invalid_credentials');return c;}
+export function credentials(path:string){const c=JSON.parse(readFileSync(path,'utf8'));if(typeof c.api_key!=='string'||!c.api_key||typeof c.name!=='string')throw Error('moltbook_invalid_credentials');return c;}
 function claimURL(value:unknown){if(typeof value!=='string')return null;try{const u=new URL(value);return u.origin==='https://www.moltbook.com'&&u.pathname.startsWith('/claim/')&&!u.username&&!u.password?value:null;}catch{return null;}}
 export async function registerMoltbook(name:string,path=credentialPath(),fetcher:typeof fetch=fetch){
  if(existsSync(path)){const c=credentials(path);return {name:c.name,claim_url:claimURL(c.claim_url),verification_code:c.verification_code,reused:true};}

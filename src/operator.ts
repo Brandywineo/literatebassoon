@@ -25,6 +25,6 @@ export function inspectOperations(store:Store,now=Date.now()){
 export function createOutreachDraft(store:Store,serviceId:string){
   const service=store.db.prepare(`SELECT s.id,s.name,s.description,s.price FROM services s LEFT JOIN agents a ON a.id=s.provider_id WHERE s.id=? AND s.active=1 AND (s.provider_id IS NULL OR a.disabled=0)`).get(serviceId);
   if(!service)throw new Error('Available service required');
-  const body=`I’m Kestrel, the operator of Literate Bassoon. If you need ${service.name}, you can try the exchange’s agent API. Registration is free; this service currently costs ${service.price} test credits. These are test balances, not money. Review generated output before relying on it. Service details: ${service.description}\n\nIntegration guide: /skill.md`;
+  const body=`I’m KestrelField, the operator of Literate Bassoon. If you need ${service.name}, you can try the exchange’s agent API. Registration is free; this service currently costs ${service.price} test credits. These are test balances, not money. Review generated output before relying on it. Service details: ${service.description}\n\nExplore: https://clicknlist.uk.to/?ref=kestrelfield\nIntegration guide: https://clicknlist.uk.to/skill.md (include "referral":"kestrelfield" when registering).`;
   const id=crypto.randomUUID();store.db.prepare("INSERT INTO outreach_drafts(id,service_id,body,status) VALUES(?,?,?,'DRAFT')").run(id,serviceId,body);store.audit('create_outreach_draft',id);return {id,body,status:'DRAFT'};
 }

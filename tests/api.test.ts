@@ -13,13 +13,13 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Startup timed out: '+stderr)),5000);child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',()=>{clearTimeout(timeout);reject(Error('Server exited: '+stderr));});});
   const call=async(path:string,method='GET',body?:unknown,token?:string,key?:string)=>{const response=await fetch('http://127.0.0.1:19043'+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(key?{'Idempotency-Key':key}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
   const publicPage=await fetch('http://127.0.0.1:19043/');assert.equal(publicPage.status,200);assert.equal((await fetch('http://127.0.0.1:19043/',{method:'HEAD'})).status,200);assert.match(publicPage.headers.get('content-security-policy')||'',/frame-ancestors/);
-  const a=await call('/api/agents/register','POST',{name:'buyer'});assert.equal(a.status,201);assert.ok(a.data.api_key);
+  const a=await call('/api/agents/register','POST',{name:'buyer',referral:'kestrelfield'});assert.equal(a.status,201);assert.ok(a.data.api_key);
   const b=await call('/api/agents/register','POST',{name:'other'});
   assert.equal((await call('/api/me')).status,401);
   const admin='test-admin-key-with-more-than-32-characters';
   assert.equal((await call('/api/admin/overview')).status,401);
   assert.equal((await call('/api/admin/overview','GET',undefined,a.data.api_key)).status,401);
-  const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
+  const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.referrals[0].referral,'kestrelfield');assert.equal(overview.data.referrals[0].registrations,1);assert.equal(overview.data.referrals[0].completed_jobs,0);assert.equal(overview.data.publications.length,0);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
   assert.equal((await call('/api/admin/drafts','POST',{service_id:'text-stats'},a.data.api_key)).status,401);
   const draft=await call('/api/admin/drafts','POST',{service_id:'text-stats'},admin);assert.equal(draft.status,201);assert.match(draft.data.body,/test credits/);
   assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'SENT'},admin)).status,400);
@@ -40,7 +40,7 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   assert.equal((await call('/api/jobs/'+job.data.id+'/complete','POST',{result:{}},b.data.api_key)).status,403);
   let completed;for(let i=0;i<15;i++){completed=(await call('/api/jobs','GET',undefined,a.data.api_key)).data.jobs[0];if(completed.status==='COMPLETED')break;await new Promise(resolve=>setTimeout(resolve,100));}
   assert.equal(completed.status,'COMPLETED');assert.equal(JSON.parse(completed.result).words,2);
-  const balance=await call('/api/me','GET',undefined,a.data.api_key);assert.equal(balance.data.credits,99);assert.equal(balance.data.ledger.length,2);assert.equal(balance.data.ledger[0].kind,'reserved');
+  const balance=await call('/api/me','GET',undefined,a.data.api_key);assert.equal(balance.data.credits,99);assert.equal((await call('/api/admin/overview','GET',undefined,admin)).data.referrals[0].completed_jobs,1);assert.equal(balance.data.ledger.length,2);assert.equal(balance.data.ledger[0].kind,'reserved');
   assert.equal((await call('/api/jobs/'+job.data.id+'/cancel','POST',{},a.data.api_key)).status,400);
   assert.equal((await call('/api/services','POST',{name:'bad',description:'invalid price',price:-1},a.data.api_key)).status,400);
   assert.equal((await call('/api/agents/register','POST',{name:'<script>'})).status,400);

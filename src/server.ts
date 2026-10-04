@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
+import { publishDraft, verifyPublication, createIntroduction } from './publishing.ts';
 import { createOutreachDraft } from './operator.ts';
 import { openStore, hash } from './store.ts';
 
@@ -29,7 +30,7 @@ const server=createServer(async(req,res)=>{
     if(method==='GET'&&path==='/api/stats') return send(res,200,{agents:store.db.prepare(`SELECT count(*) AS n FROM agents`).get()?.n,services:store.db.prepare(`SELECT count(*) AS n FROM services WHERE active=1`).get()?.n,completed_jobs:store.db.prepare(`SELECT count(*) AS n FROM jobs WHERE status='COMPLETED'`).get()?.n,operator});
     if(method==='POST'&&path==='/api/agents/register') {
       limit(req.socket.remoteAddress||'unknown','register',5); const b=await body(req);const name=str(b.name,3,40,'Name');if(!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Name may contain letters, numbers, underscores and hyphens');
-      return send(res,201,store.register(name,str(b.description||'Independent agent',1,500,'Description')));
+      return send(res,201,store.register(name,str(b.description||'Independent agent',1,500,'Description'),b.referral==null?null:str(b.referral,1,64,'Referral')));
     }
     if(path.startsWith('/api/admin/')) {
       const supplied=req.headers.authorization?.replace(/^Bearer /,'') || '';
@@ -43,6 +44,8 @@ const server=createServer(async(req,res)=>{
         moltbook:store.db.prepare('SELECT name,status,checked_at,claim_url,error_code FROM moltbook_state WHERE id=1').get(),
         monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
         activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
+        referrals:store.db.prepare(`SELECT a.referral,count(DISTINCT a.id) AS registrations,count(DISTINCT CASE WHEN j.status='COMPLETED' THEN j.id END) AS completed_jobs FROM agents a LEFT JOIN jobs j ON j.buyer_id=a.id WHERE a.referral IS NOT NULL GROUP BY a.referral`).all(),
+        publications:store.db.prepare('SELECT draft_id,title,submolt,status,attempted_at,post_id,challenge,expires_at,error_code FROM moltbook_publications ORDER BY attempted_at DESC LIMIT 30').all(),
         drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
         revenue:store.db.prepare("SELECT coalesce(sum(amount),0) AS credits FROM ledger WHERE kind='platform_test_revenue'").get()?.credits,
         runs:store.db.prepare('SELECT id,job_id,provider,model,status,error_code,created_at,started_ms,finished_ms FROM operator_runs ORDER BY rowid DESC LIMIT 30').all(),
@@ -50,8 +53,11 @@ const server=createServer(async(req,res)=>{
       });
       if(method==='POST'&&path==='/api/admin/operator') {const b=await body(req);if(typeof b.enabled!=='boolean'||!['ollama','openai'].includes(b.provider))throw new Error('Invalid operator settings');const model=str(b.model,0,100,'Model');if(b.enabled&&!model.trim())throw new Error('Configure a model before enabling');if(b.enabled&&b.provider==='openai'&&!process.env.OPENAI_API_KEY)throw new Error('Set OPENAI_API_KEY in the private environment file first');const daily=integer(b.daily_limit);if(daily<1||daily>500)throw new Error('Daily request limit must be 1–500');store.setOperator(b.enabled,b.provider,model,daily);return send(res,200,{ok:true});}
       if(method==='POST'&&path==='/api/admin/drafts'){const b=await body(req);return send(res,201,createOutreachDraft(store,str(b.service_id,1,80,'Service ID')));}
+      if(method==='POST'&&path==='/api/admin/introduction')return send(res,201,createIntroduction(store));
+      const publicationMatch=path.match(/^\/api\/admin\/drafts\/([^/]+)\/(publish|verify)$/);
+      if(method==='POST'&&publicationMatch){const b=await body(req);return send(res,200,publicationMatch[2]==='publish'?await publishDraft(store,publicationMatch[1],str(b.title,3,200,'Title'),str(b.submolt||'general',1,40,'Submolt')):await verifyPublication(store,publicationMatch[1],str(b.answer,4,40,'Answer')));}
       const draftMatch=path.match(/^\/api\/admin\/drafts\/([^/]+)$/);
-      if(method==='POST'&&draftMatch){const b=await body(req);if(!['APPROVED','ARCHIVED'].includes(b.status))throw new Error('Draft status must be APPROVED or ARCHIVED');store.transaction(()=>{const changed=store.db.prepare('UPDATE outreach_drafts SET status=? WHERE id=?').run(b.status,draftMatch[1]);if(!changed.changes)throw new Error('Draft not found');store.audit('outreach_draft_'+b.status.toLowerCase(),draftMatch[1]);});return send(res,200,{ok:true});}
+      if(method==='POST'&&draftMatch){const b=await body(req);if(!['APPROVED','ARCHIVED'].includes(b.status))throw new Error('Draft status must be APPROVED or ARCHIVED');store.transaction(()=>{const changed=store.db.prepare('UPDATE outreach_drafts SET status=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM moltbook_publications WHERE draft_id=outreach_drafts.id)').run(b.status,draftMatch[1]);if(!changed.changes)throw new Error('Draft not found');store.audit('outreach_draft_'+b.status.toLowerCase(),draftMatch[1]);});return send(res,200,{ok:true});}
       const adminMatch=path.match(/^\/api\/admin\/(agents|services|jobs)\/([^/]+)$/);
       if(method==='POST'&&adminMatch){const b=await body(req),[,kind,id]=adminMatch;store.transaction(()=>{
         if(kind==='agents'){if(typeof b.disabled!=='boolean')throw new Error('disabled must be boolean');const changed=store.db.prepare('UPDATE agents SET disabled=? WHERE id=?').run(b.disabled?1:0,id);if(!changed.changes)throw new Error('Agent not found');store.audit(b.disabled?'suspend_agent':'restore_agent',id);}

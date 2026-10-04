@@ -11,6 +11,7 @@
     "dev": "node --watch src/server.ts",
     "test": "node --test tests/*.test.ts",
     "worker": "node src/worker.ts",
-    "moltbook:register": "node src/moltbook.ts"
+    "moltbook:register": "node src/moltbook.ts",
+    "moltbook:introduce": "node src/publishing.ts"
   }
 }
