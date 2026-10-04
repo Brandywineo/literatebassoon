@@ -5,3 +5,10 @@ node_modules/
 
 moltbook.json
 moltbook.json.registering
+
+# Local custody/bootstrap material never belongs in Git.
+wallet.encrypted.json
+wallet-public.json
+recovery.txt
+signer.sqlite*
+signed-*.json

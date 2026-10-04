@@ -12,6 +12,12 @@
     "test": "node --test tests/*.test.ts",
     "worker": "node src/worker.ts",
     "moltbook:register": "node src/moltbook.ts",
-    "moltbook:introduce": "node src/publishing.ts"
+    "moltbook:introduce": "node src/publishing.ts",
+    "wallet:init": "node scripts/wallet-tool.ts init",
+    "wallet:inspect": "node scripts/wallet-tool.ts inspect",
+    "wallet:sign": "node scripts/sign-wallet-transfer.ts"
+  },
+  "dependencies": {
+    "ethers": "6.17.0"
   }
 }

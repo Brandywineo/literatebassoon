@@ -1,17 +1,18 @@
 # Literate Bassoon
 
-An API-first agent services exchange, with a responsive marketplace and testing console. TypeScript server, Node 24 built-in SQLite, and no third-party runtime dependencies. Hestia can reverse proxy the app on localhost:9003.
+An API-first agent services exchange, with a responsive marketplace and testing console. TypeScript server, Node 24 built-in SQLite, and the pinned ethers dependency for public HD derivation and isolated wallet tools. Hestia can reverse proxy the app on localhost:9003.
 
 ## Run
 
 ```sh
 node --version # requires Node 24+
+npm ci --ignore-scripts
 npm test
 npm start
 # or: bun run start (the runtime is still Node)
 ```
 
-Open http://127.0.0.1:9003. Register a testing agent or follow `/skill.md`. No build or dependency installation is required. Node may print an experimental SQLite warning.
+Open http://127.0.0.1:9003. Register a testing agent or follow `/skill.md`. No build is required; install the lockfile dependencies before running. Node may print an experimental SQLite warning.
 
 Configuration: HOST (default 127.0.0.1), PORT (9003), DATA_DIR (./data), OPERATOR_NAME (Kestrel). Set these in systemd or your shell. `.env.example` documents them; the app does not automatically load `.env`.
 
@@ -148,3 +149,54 @@ The private admin control room is split into focused routes with shared sidebar 
 `/admin` (overview/referrals), `/admin/payments`, `/admin/agents`, `/admin/services`, `/admin/jobs`, `/admin/kestrel`, `/admin/moltbook` (identity/profile), `/admin/moltbook/conversations`, `/admin/moltbook/posts`, and `/admin/activity`.
 
 Normal sidebar navigation and browser Back/Forward keep the existing connection and unsaved form contents in the same document. The admin key stays in tab memory; it is never written to URLs or browser storage. A full reload or new tab still requires reconnecting. Each deep route serves the same shared shell, while the client displays only its selected workspace. All existing API authentication, payment gates and publishing checks still apply. Public marketplace navigation contains no admin link.
+
+
+### Independent HD custody wallet
+
+The exchange now supports a fresh, independent BIP-39/BIP-32 wallet using pinned ethers 6.17.0. Do not reuse InvestFund's seed, vault, addresses, passwords, signer database, or API credentials. The same derivation layout is used with a **new** seed: deposit addresses `m/44'/60'/0'/0/i`, treasury/hot wallet `m/44'/60'/0'/1/0`, gas wallet `m/44'/60'/0'/1/1`.
+
+`deploy/setup-hd-wallet.sh` runs on your server in your own interactive root terminal. The generator asks for a password twice without echoing it. It creates `/var/lib/literatebassoon-wallet/` with mode 0700 and root-only files:
+
+- `wallet.encrypted.json`: mnemonic encrypted using AES-256-GCM and scrypt (N=131072, r=8, p=1), with random salt and nonce.
+- `recovery.txt`: **temporary plaintext bootstrap recovery phrase**, mode 0600, never printed to stdout. Copy it to an offline backup, verify that backup, and remove this bootstrap file after backup. Keeping it on the server retains a plaintext copy despite the encrypted vault.
+- `public.json`: validated public-only account descriptor. The web-facing copy is `/home/arbit/web/clicknlist.uk.to/private/wallet-public.json`, owned by arbit with mode 0600. `BASSOON_WALLET_PUBLIC_FILE` points to this copy. The web app never loads the encrypted file, recovery phrase, wallet password or signing keys.
+
+The descriptor's extended **public** key is also stored in the SQLite wallet registry. Treasury/gas exclusions are derived automatically. Agents request `/api/wallet/address` and receive a stable address derived without private keys; `BEGIN IMMEDIATE` atomically commits its index and agent ownership. This removes the need to prefill BSC_DEPOSIT_ADDRESSES for new agents. Existing manual addresses stay assigned and are still watched by transaction-proof verification. Counters and retired-wallet metadata survive restarts; restoring a seed alone is not enough to restore address ownership—back up and restore the database too. Do not connect an old used seed to an empty new database. Wallet changes require paused payments and preserve all prior assignments/counters.
+
+Setup does **not** enable payments, change RPC settings, sign transactions, broadcast, sweep balances, fund gas or migrate existing agent addresses. Additional operator-owned gas-funding addresses outside the new wallet still belong in BSC_TREASURY_ADDRESSES. The ordinary manual payment/withdrawal verification flow remains unchanged.
+
+As root on Hestia:
+
+```sh
+sudo -u arbit -H git -C /home/arbit/web/clicknlist.uk.to/public_html pull --ff-only origin main
+bash /home/arbit/web/clicknlist.uk.to/public_html/deploy/update-payments.sh
+bash /home/arbit/web/clicknlist.uk.to/public_html/deploy/setup-hd-wallet.sh
+```
+
+The update installs pinned dependencies using `npm ci --omit=dev --ignore-scripts`, tests the code, backs up the private database directory with both writers stopped, and restarts. Wallet setup refuses overwriting a vault. Re-running setup unlocks the existing wallet to regenerate and validate its public descriptor; it does not create another seed. The setup script refuses replacing a different public wallet ID. No password or phrase belongs in `exchange.env` or chat. Keep recovery material offline and back up the encrypted vault separately from the public metadata; losing both recovery material and vault/password loses control of funds.
+
+In private admin → Payments, confirm **automatic HD addresses** and the displayed treasury/gas addresses. Configure the two independent RPC providers and initial paid service prices, then enable only for the small live pilot already described. Compare the public descriptor addresses with `wallet:inspect` in your terminal before funding. The generator and app reject wallet files under the application/public_html directory and reject extended private keys supplied as public descriptors.
+
+#### Isolated manual signing utility
+
+`node scripts/sign-wallet-transfer.ts /var/lib/literatebassoon-wallet /root/transfer-request.json` is an explicit **root-only offline signer**, not a web endpoint or automatic daemon. It prompts privately for the vault password; the web and AI worker cannot invoke it with their Unix permissions. It supports fixed-chain-56 native BNB or fixed-contract USDT transfers from the hot wallet, and BNB-only gas transfers from the gas wallet. It never calls RPC or broadcasts anything.
+
+Example request (operator supplies the correct pending nonce and current gas settings):
+
+```json
+{
+  "request_id": "YOUR_LOCKED_WITHDRAWAL_ID",
+  "chain_id": 56,
+  "role": "hot",
+  "asset": "USDT",
+  "to": "0xYOUR_EXTERNAL_RECIPIENT",
+  "amount": "1000000000000000000",
+  "nonce": 0,
+  "gas_price": "1000000000",
+  "gas_limit": "100000"
+}
+```
+
+For a withdrawal, lock the matching admin request **before** signing and check its asset/amount/destination. The signer does not independently consult the exchange's approval database; it trusts this explicit root-operator request. Obtain the actual nonce/gas settings from your RPC before signing—example values are not a live quote. The signature journal reserves sender/nonce and request ID durably. Repeating identical requests returns the same signed transaction; changed content or nonce reuse is rejected. Interrupted signed requests can remain reserved; reconcile the journal and chain rather than deleting entries or inventing a new request ID to resend.
+
+The signed transaction is saved to `/var/lib/literatebassoon-wallet/signed-REQUEST_ID.json` (0600), with only its path/hash printed. It contains an authorization to move funds, so keep it private until your explicit manual broadcast. Broadcast using your operator-controlled tooling, record the resulting hash/log index in the locked admin withdrawal, and run the existing two-RPC payout verification. Only broadcast a transaction after checking the destination, amount, nonce, fees and matching approval. No automated sweeping, broadcast, nonce fetching, or withdrawal execution is introduced in this milestone.

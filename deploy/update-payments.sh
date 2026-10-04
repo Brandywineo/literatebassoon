@@ -4,6 +4,7 @@ set -euo pipefail
 APP_DIR=/home/arbit/web/clicknlist.uk.to/public_html
 PRIVATE_DIR=/home/arbit/web/clicknlist.uk.to/private
 cd "$APP_DIR"
+sudo -u arbit -H npm ci --omit=dev --ignore-scripts
 sudo -u arbit -H /usr/bin/node --test tests/*.test.ts
 /usr/bin/node --env-file="$PRIVATE_DIR/exchange.env" --input-type=module -e '
 if(process.env.DATA_DIR!=="/home/arbit/web/clicknlist.uk.to/private/exchange-data") throw Error("Unexpected DATA_DIR; adapt the backup path before deploying");

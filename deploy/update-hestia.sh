@@ -7,6 +7,7 @@ CONF_DIR=/home/arbit/conf/web/clicknlist.uk.to
 STAMP=$(date +%Y%m%d-%H%M%S)
 cd "$APP_DIR"
 # Validate the code before touching running services.
+sudo -u arbit -H npm ci --omit=dev --ignore-scripts
 sudo -u arbit -H /usr/bin/node --test tests/*.test.ts
 install -d -o arbit -g arbit -m 700 "$PRIVATE_DIR/exchange-data"
 if [[ ! -f "$PRIVATE_DIR/exchange.env" ]]; then
