@@ -34,8 +34,8 @@ export async function processChallenges(store:Store,path=credentialPath(),fetche
    const row=store.db.prepare(`SELECT * FROM ${table} WHERE status='PENDING_VERIFICATION' AND NOT EXISTS(SELECT 1 FROM social_verification_attempts WHERE target=?||${key}) LIMIT 1`).get(kind+':');
    if(!row)continue;
    const target=kind+':'+row[key];
-   if(challengeDeadline(row.expires_at)-now<75000){store.db.prepare('INSERT INTO social_verification_attempts VALUES(?,?,?,?)').run(target,now,'DEFERRED','insufficient_verification_time');continue;}
-   store.db.prepare('INSERT INTO social_verification_attempts VALUES(?,?,?,NULL)').run(target,now,'RUNNING');
+   if(challengeDeadline(row.expires_at)-now<75000){store.db.prepare('INSERT INTO social_verification_attempts(target,started_at,status,error_code) VALUES(?,?,?,?)').run(target,now,'DEFERRED','insufficient_verification_time');continue;}
+   store.db.prepare('INSERT INTO social_verification_attempts(target,started_at,status,error_code) VALUES(?,?,?,NULL)').run(target,now,'RUNNING');
    store.db.prepare(`UPDATE ${table} SET status='SOLVING' WHERE ${key}=?`).run(row[key]);
    return {row,table,key,kind,target};
   }
@@ -45,17 +45,18 @@ export async function processChallenges(store:Store,path=credentialPath(),fetche
  const {row,table,key,kind,target}=reserved;
  try{
   const out=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-verification',String(row.challenge),fetcher);
-  const answer=calculateChallenge(out.text);
+  const answer=calculateChallenge(out.text),expression=JSON.parse(out.text);
+  store.db.prepare('UPDATE social_verification_attempts SET equation=?,answer=? WHERE target=?').run(`${expression.a} ${expression.op} ${expression.b}`,answer,target);
   store.db.prepare(`UPDATE ${table} SET status='PENDING_VERIFICATION' WHERE ${key}=? AND status='SOLVING'`).run(row[key]);
   const current=Date.now();expireChallenges(store,current);
   if(!store.settings().enabled||!store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)throw Error('verification_paused');
   if(challengeDeadline(row.expires_at)<=current)throw Error('verification_expired');
   const result=kind==='reply'?await verifyReply(store,String(row[key]),answer,path,fetcher,current):await verifyPublication(store,String(row[key]),answer,path,fetcher,current);
-  store.db.prepare('UPDATE social_verification_attempts SET status=? WHERE target=?').run(result.status,target);
+  store.db.prepare('UPDATE social_verification_attempts SET status=?,finished_at=? WHERE target=?').run(result.status,Date.now(),target);
   store.audit('social_automatic_verification',target+':'+result.status);
- }catch{
+ }catch(e){
   store.db.prepare(`UPDATE ${table} SET status='PENDING_VERIFICATION',error_code='automatic_verification_needs_review' WHERE ${key}=? AND status='SOLVING'`).run(row[key]);
   expireChallenges(store,Date.now());
-  store.db.prepare("UPDATE social_verification_attempts SET status='NEEDS_REVIEW',error_code='automatic_verification_needs_review' WHERE target=?").run(target);
+  store.db.prepare("UPDATE social_verification_attempts SET status='NEEDS_REVIEW',error_code=?,finished_at=? WHERE target=?").run(e instanceof Error&&['verification_paused','verification_expired','challenge_ambiguous'].includes(e.message)?e.message:'solver_or_response_failed',Date.now(),target);
  }
 }

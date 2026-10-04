@@ -1,3 +1,4 @@
+import {MoltbookVerificationError,verificationReason,recordVerificationResponse} from './verification-diagnostics.ts';
 import {challengeDeadline} from './social-verification.ts';
 import {pathToFileURL} from 'node:url';
 import {openStore,hash} from './store.ts';
@@ -54,8 +55,8 @@ export async function publishReply(store:Store,id:string,path=credentialPath(),f
 export async function verifyReply(store:Store,id:string,answer:string,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now()){
  if(!/^-?\d{1,12}\.\d{2}$/.test(answer))throw Error('Answer must have two decimal places');const c=identity(path);
  const row=store.transaction(()=>{const r=store.db.prepare("SELECT * FROM social_replies WHERE id=? AND status='PENDING_VERIFICATION'").get(id);if(!r||!Number.isFinite(challengeDeadline(r.expires_at))||challengeDeadline(r.expires_at)<=now)throw Error('No unexpired verification');store.db.prepare("UPDATE social_replies SET status='VERIFYING' WHERE id=?").run(id);return r;});
- try{const result=await request('/verify',c.api_key,{verification_code:row.verification_code,answer},fetcher);if(result.success!==true||result.content_id!==row.comment_id)throw Error('verification_not_confirmed');store.db.prepare("UPDATE social_replies SET status='PUBLISHED',verification_code=NULL,challenge=NULL WHERE id=?").run(id);store.audit('social_reply_published',id);return {status:'PUBLISHED'};}
- catch(e){const code=errorCode(e);store.db.prepare("UPDATE social_replies SET status='VERIFICATION_FAILED',error_code=? WHERE id=?").run(code,id);return {status:'VERIFICATION_FAILED',error_code:code};}
+ try{const result=await request('/verify',c.api_key,{verification_code:row.verification_code,answer},fetcher);if(result.success!==true){recordVerificationResponse(store,'reply',id,200,verificationReason(result));throw Error('verification_not_confirmed');}if(result.content_id!==row.comment_id){recordVerificationResponse(store,'reply',id,200,'content_id_mismatch');throw Error('verification_not_confirmed');}recordVerificationResponse(store,'reply',id,200,'verified');store.db.prepare("UPDATE social_replies SET status='PUBLISHED',verification_code=NULL,challenge=NULL WHERE id=?").run(id);store.audit('social_reply_published',id);return {status:'PUBLISHED'};}
+ catch(e){if(e instanceof MoltbookVerificationError)recordVerificationResponse(store,'reply',id,e.httpStatus,e.reason);const code=errorCode(e);store.db.prepare("UPDATE social_replies SET status='VERIFICATION_FAILED',error_code=? WHERE id=?").run(code,id);return {status:'VERIFICATION_FAILED',error_code:code};}
 }
 
 export const liveTestPostId='7cf4643f-ac6c-4ee1-bd27-31088b94de6f';

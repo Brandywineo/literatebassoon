@@ -31,3 +31,20 @@ test('ambiguous solver output never guesses, retries or publishes',async()=>{
  const gen=async()=>{calls++;return {text:'null',provider:'ollama',model:'test'};};const fake=async()=>{throw Error('must not send');};await processChallenges(s,'unused',fake as typeof fetch,now,gen);await processChallenges(s,'unused',fake as typeof fetch,now,gen);assert.equal(calls,1);assert.equal(s.db.prepare('SELECT status FROM social_replies').get()?.status,'PENDING_VERIFICATION');
  }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+test('verification rejection diagnostics whitelist reasons and discard echoed secrets',async()=>{
+ const {request}=await import('../src/moltbook.ts');const {MoltbookVerificationError,verificationReason}=await import('../src/verification-diagnostics.ts');
+ const fake=async()=>new Response(JSON.stringify({error:'Incorrect answer',hint:'secret-api-key verification-code private provider text'}),{status:400});
+ await assert.rejects(request('/verify','secret',{},fake as typeof fetch),e=>e instanceof MoltbookVerificationError&&e.httpStatus===400&&e.reason==='incorrect_answer'&&!JSON.stringify(e).includes('secret'));
+ assert.equal(verificationReason({error:'Incorrect answer secret-api-key'}),'unclassified_rejection');
+ assert.equal(verificationReason({error:{code:'invalid_verification_code',message:'secret'}}),'invalid_verification_code');
+ const large=async()=>new Response('x'.repeat(70000),{status:400});await assert.rejects(request('/verify','secret',{},large as typeof fetch),/moltbook_response_too_large/);
+});
+test('failed automatic answer retains numeric diagnostics but no verification credentials',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/verify-'),s=openStore(dir+'/data'),path=dir+'/identity',now=Date.now();try{
+ writeFileSync(path,JSON.stringify({name:'KestrelField',api_key:'private-api-key'}));s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,comment_id,challenge,verification_code,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','c','challenge','private-verification-code',?)").run(new Date(now+300000).toISOString());
+ const gen=async()=>({text:'{"a":25,"b":7,"op":"-"}',provider:'ollama',model:'test'});let sends=0;const fake=async()=>{sends++;return new Response(JSON.stringify({error:'Incorrect answer',hint:'private-api-key private-verification-code'}),{status:400});};
+ await processChallenges(s,path,fake as typeof fetch,now,gen);await processChallenges(s,path,fake as typeof fetch,now,gen);
+ const row=s.db.prepare('SELECT * FROM social_verification_attempts').get()!;assert.equal(row.equation,'25 - 7');assert.equal(row.answer,'18.00');assert.equal(row.http_status,400);assert.equal(row.response_reason,'incorrect_answer');assert.equal(row.status,'VERIFICATION_FAILED');assert.ok(row.finished_at);assert.equal(sends,1);assert.equal(JSON.stringify(row).includes('private-'),false);
+ }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
+});

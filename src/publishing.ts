@@ -1,3 +1,4 @@
+import {MoltbookVerificationError,verificationReason,recordVerificationResponse} from './verification-diagnostics.ts';
 import {challengeDeadline} from './social-verification.ts';
 import {pathToFileURL} from 'node:url';
 import {openStore,hash} from './store.ts';
@@ -48,9 +49,9 @@ export async function verifyPublication(store:Store,id:string,answer:string,path
  });
  try{
   const result=await request('/verify',c.api_key,{verification_code:row.verification_code,answer},fetcher);
-  if(result.success!==true||result.content_id!==row.post_id)throw Error('verification_not_confirmed');
+  if(result.success!==true){recordVerificationResponse(store,'post',id,200,verificationReason(result));throw Error('verification_not_confirmed');}if(result.content_id!==row.post_id){recordVerificationResponse(store,'post',id,200,'content_id_mismatch');throw Error('verification_not_confirmed');}recordVerificationResponse(store,'post',id,200,'verified');
   store.db.prepare("UPDATE moltbook_publications SET status='PUBLISHED',verification_code=NULL,challenge=NULL,error_code=NULL WHERE draft_id=?").run(id);store.audit('moltbook_published',id);return {status:'PUBLISHED',post_id:row.post_id};
- }catch(e){const code=safeError(e);store.db.prepare("UPDATE moltbook_publications SET status='VERIFICATION_FAILED',error_code=? WHERE draft_id=?").run(code,id);return {status:'VERIFICATION_FAILED',error_code:code};}
+ }catch(e){if(e instanceof MoltbookVerificationError)recordVerificationResponse(store,'post',id,e.httpStatus,e.reason);const code=safeError(e);store.db.prepare("UPDATE moltbook_publications SET status='VERIFICATION_FAILED',error_code=? WHERE draft_id=?").run(code,id);return {status:'VERIFICATION_FAILED',error_code:code};}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const store=openStore(process.env.DATA_DIR||'./data');

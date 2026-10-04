@@ -28,6 +28,7 @@ async function load(){const activeKey=key,data=await api('overview');if(key!==ac
    if(publication.status==='PUBLISHED'&&/^[a-zA-Z0-9-]{1,100}$/.test(publication.post_id)){const link=document.createElement('a');link.textContent='View published post';link.href='https://www.moltbook.com/post/'+publication.post_id;link.target='_blank';link.rel='noopener noreferrer';card.append(link);}
    if(publication.status==='PENDING_VERIFICATION'){const challenge=document.createElement('pre');challenge.textContent=publication.challenge+'\nExpires: '+publication.expires_at;card.append(challenge);if(Date.parse(publication.expires_at)>Date.now()){const answer=document.createElement('input');answer.placeholder='Answer with two decimal places';answer.setAttribute('aria-label','Verification answer');card.append(answer,button('Submit verification answer',()=>api('drafts/'+draft.id+'/verify',{answer:answer.value})));}else{const p=document.createElement('p');p.textContent='Verification expired. The post was not published.';card.append(p);}}
   }
+  appendVerificationDiagnostics(card,data.social?.verification_attempts?.find(a=>a.target==='post:'+draft.id));
   $('#drafts').append(card);
  }
  table('#agents',['Name','Test credits','USDT','BNB','State','Action'],data.agents.map(a=>[a.name,a.credits,decimal(a.usdt),decimal(a.bnb),a.disabled?'Suspended':'Active',button(a.disabled?'Restore':'Suspend',()=>api('agents/'+a.id,{disabled:!a.disabled}))]));
@@ -55,7 +56,7 @@ function renderSocial(social){
   if(r.error_code){const e=document.createElement('p');e.textContent=r.error_code;card.append(e);}
   if(r.status==='PUBLISHED'){const link=document.createElement('a');link.textContent='View discussion with reply';link.href='https://www.moltbook.com/post/'+r.post_id;link.target='_blank';link.rel='noopener noreferrer';card.append(link);}
   if(r.status==='PENDING_VERIFICATION'){const challenge=document.createElement('pre');challenge.textContent=r.challenge+'\nExpires: '+r.expires_at;card.append(challenge);if(Date.parse(r.expires_at)>Date.now()){const answer=document.createElement('input');answer.setAttribute('aria-label','Reply verification answer');answer.placeholder='Number with two decimal places';card.append(answer,button('Verify reply',()=>api('social/replies/'+r.id+'/verify',{answer:answer.value})));}else{const expired=document.createElement('p');expired.textContent='Verification expired; this reply is not published.';card.append(expired);}}
-  $('#social-replies').append(card);
+  appendVerificationDiagnostics(card,social.verification_attempts?.find(a=>a.target==='reply:'+r.id));$('#social-replies').append(card);
  }
 }
 $('#social-discover').onclick=async()=>{try{await api('social/discover',{});await load();}catch(e){toast(e.message);}};
@@ -70,3 +71,5 @@ $('#platform-withdraw-form').onsubmit=async e=>{e.preventDefault();try{const d=O
 initAdminPages();
 
 $('#social-autonomy-toggle').onclick=async()=>{try{await api('social/autonomy',{enabled:!autonomousEnabled});await load();}catch(e){toast(e.message);}};
+
+function appendVerificationDiagnostics(card,attempt){if(!attempt)return;const details=document.createElement('p');details.className='small';details.textContent='Automatic verification: '+attempt.status+(attempt.equation?' · '+attempt.equation+' = '+attempt.answer:'')+(attempt.http_status?' · HTTP '+attempt.http_status:'')+(attempt.response_reason?' · '+attempt.response_reason.replaceAll('_',' '):'')+(attempt.error_code?' · '+attempt.error_code.replaceAll('_',' '):'')+(attempt.finished_at?' · '+Math.max(0,Math.round((attempt.finished_at-attempt.started_at)/1000))+'s':'');card.append(details);}

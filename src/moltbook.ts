@@ -1,3 +1,4 @@
+import {MoltbookVerificationError,verificationReason} from './verification-diagnostics.ts';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -6,10 +7,12 @@ const base='https://www.moltbook.com/api/v1';
 export const credentialPath=()=>process.env.MOLTBOOK_CREDENTIALS_FILE||resolve(process.env.DATA_DIR||'./data','..','moltbook.json');
 export async function request(path:string,key:string|undefined,body:unknown,fetcher:typeof fetch,method?:string,maxBytes=65536){
  const response=await fetcher(base+path,{method:method||(body===undefined?'GET':'POST'),redirect:'error',signal:AbortSignal.timeout(20000),headers:{'Content-Type':'application/json',...(key?{Authorization:'Bearer '+key}:{})},body:body===undefined?undefined:JSON.stringify(body)});
- if(!response.ok)throw Error(`moltbook_http_${response.status}`);
+ if(!response.ok&&path!=='/verify')throw Error(`moltbook_http_${response.status}`);
  const reader=response.body?.getReader();if(!reader)throw Error('moltbook_empty_response');let size=0;const parts:Uint8Array[]=[];
  while(true){const item=await reader.read();if(item.done)break;size+=item.value.length;if(size>maxBytes){await reader.cancel();throw Error('moltbook_response_too_large');}parts.push(item.value);}
- return JSON.parse(Buffer.concat(parts).toString());
+ let data:any;try{data=JSON.parse(Buffer.concat(parts).toString());}catch{if(!response.ok)throw new MoltbookVerificationError(response.status,'unclassified_rejection');throw Error('moltbook_invalid_json');}
+ if(!response.ok)throw new MoltbookVerificationError(response.status,verificationReason(data));
+ return data;
 }
 export function credentials(path:string){const c=JSON.parse(readFileSync(path,'utf8'));if(typeof c.api_key!=='string'||!c.api_key||typeof c.name!=='string')throw Error('moltbook_invalid_credentials');return c;}
 function claimURL(value:unknown){if(typeof value!=='string')return null;try{const u=new URL(value);return u.origin==='https://www.moltbook.com'&&u.pathname.startsWith('/claim/')&&!u.username&&!u.password?value:null;}catch{return null;}}
