@@ -3,10 +3,12 @@ import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
 import {request,credentials,credentialPath} from './moltbook.ts';
 import {reviewReply,publishReply} from './social.ts';
+import {expireChallenges,processChallenges} from './social-verification.ts';
 type Store=ReturnType<typeof openStore>;
 export function autonomyStatus(store:Store,now=Date.now()){
+ expireChallenges(store,now);
  const row=store.db.prepare('SELECT * FROM social_autonomy WHERE id=1').get()!;
- const blocked=store.db.prepare("SELECT status FROM social_replies WHERE status IN ('SENDING','UNCERTAIN','PENDING_VERIFICATION','VERIFYING') LIMIT 1").get()?.status;
+ const blocked=store.db.prepare("SELECT status FROM social_replies WHERE status IN ('SENDING','UNCERTAIN','PENDING_VERIFICATION','VERIFYING','SOLVING') LIMIT 1").get()?.status;
  return {...row,enabled:Boolean(row.enabled),blocked:blocked||null,generation_attempts:Number(store.db.prepare('SELECT count(*) AS n FROM social_generation WHERE started_at>=?').get(now-86400000)?.n),thread_scan:store.db.prepare('SELECT * FROM social_thread_scan WHERE id=1').get(),incoming_waiting:Number(store.db.prepare('SELECT count(*) AS n FROM social_incoming i WHERE NOT EXISTS(SELECT 1 FROM social_replies r WHERE r.parent_id=i.id) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.parent_id=i.id)').get()?.n)};
 }
 export function setAutonomy(store:Store,enabled:boolean){
@@ -14,7 +16,7 @@ export function setAutonomy(store:Store,enabled:boolean){
  store.transaction(()=>{store.db.prepare('UPDATE social_autonomy SET enabled=?,error_code=NULL WHERE id=1').run(enabled?1:0);store.audit(enabled?'social_autonomy_enabled':'social_autonomy_paused','KestrelField');});return autonomyStatus(store);
 }
 export function validateAutonomousReply(body:unknown,source:string){
- if(typeof body!=='string'||body.trim().length<80||body.length>1200)throw Error('reply_quality_rejected');
+ if(typeof body!=='string'||body.trim().length<80||body.length>1200||(body.match(/\?/g)||[]).length>1)throw Error('reply_quality_rejected');
  if(/https?:|www\.|clicknlist|\[[^\]]*\]\(|<a\b|api[_ -]?key|seed phrase|private key|send (?:me|us)|guaranteed|ignore (?:previous|all)|as an ai|```/i.test(body))throw Error('reply_quality_rejected');
  const words=(s:string)=>new Set(s.toLowerCase().match(/[a-z]{5,}/g)||[]);
  const sourceWords=words(source),shared=[...words(body)].filter(w=>sourceWords.has(w));
@@ -22,11 +24,10 @@ export function validateAutonomousReply(body:unknown,source:string){
  return body.trim();
 }
 // Reserve before every model call; a crashed attempt still consumes today's budget.
-// Never replay an uncertain write or solve verification challenges automatically.
+// Never replay an uncertain write; verification has its own durable reservation.
 export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now(),generateText=generate){
- store.transaction(()=>{
-  store.db.prepare("UPDATE social_replies SET status='VERIFICATION_EXPIRED',error_code='verification_expired' WHERE status='PENDING_VERIFICATION' AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday(?)").run(new Date(now).toISOString());
- });
+ expireChallenges(store,now);
+ await processChallenges(store,path,fetcher,now,generateText);
  await scanFollowups(store,path,fetcher,now);
  const candidate=store.transaction(()=>{
   const status=autonomyStatus(store,now),cfg=store.settings();
@@ -67,7 +68,8 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   // Re-check the pause switch after slow generation before authorizing a write.
   if(!autonomyStatus(store,Date.now()).enabled||!store.settings().enabled){store.db.prepare("UPDATE social_autonomy SET last_reason='draft_retained_after_pause' WHERE id=1").run();return {status:'DRAFT'};}
   reviewReply(store,id,reply,'APPROVED');
-  const result=await publishReply(store,id,path,fetcher,now,()=>autonomyStatus(store).enabled&&Boolean(store.settings().enabled));
+  let result=await publishReply(store,id,path,fetcher,now,()=>autonomyStatus(store).enabled&&Boolean(store.settings().enabled));
+  if(result.status==='PENDING_VERIFICATION'){await processChallenges(store,path,fetcher,Date.now(),generateText);result={...result,status:String(store.db.prepare('SELECT status FROM social_replies WHERE id=?').get(id)?.status)};}
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
   const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded'].includes(e.message)?e.message:'social_cycle_failed';

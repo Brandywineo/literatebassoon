@@ -1,3 +1,4 @@
+import {challengeDeadline} from './social-verification.ts';
 import {pathToFileURL} from 'node:url';
 import {openStore,hash} from './store.ts';
 import {request,credentials,credentialPath} from './moltbook.ts';
@@ -42,7 +43,7 @@ export async function verifyPublication(store:Store,id:string,answer:string,path
  const c=privateCredentials(path);
  const row=store.transaction(()=>{
   const p=store.db.prepare("SELECT * FROM moltbook_publications WHERE draft_id=? AND status='PENDING_VERIFICATION'").get(id);if(!p)throw Error('No pending verification');
-  if(!Number.isFinite(Date.parse(String(p.expires_at)))||Date.parse(String(p.expires_at))<=now)throw Error('Verification expired; this post has not been published');
+  if(!Number.isFinite(challengeDeadline(p.expires_at))||challengeDeadline(p.expires_at)<=now)throw Error('Verification expired; this post has not been published');
   store.db.prepare("UPDATE moltbook_publications SET status='VERIFYING' WHERE draft_id=?").run(id);return p;
  });
  try{
