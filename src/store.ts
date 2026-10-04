@@ -49,6 +49,7 @@ export function openStore(dir: string) {
       CREATE UNIQUE INDEX social_reply_root ON social_replies(post_id) WHERE parent_id IS NULL;
       CREATE UNIQUE INDEX social_reply_parent ON social_replies(parent_id) WHERE parent_id IS NOT NULL;`);
   }
+  db.exec(`CREATE TABLE IF NOT EXISTS social_visibility(reply_id TEXT PRIMARY KEY,visibility TEXT NOT NULL,checked_at INTEGER NOT NULL,last_visible_at INTEGER,verification_status TEXT,error_code TEXT);`);
   column('social_generation','parent_id','TEXT');
   column('social_autonomy','last_cycle_at','INTEGER NOT NULL DEFAULT 0');
   column('social_autonomy','last_reason','TEXT');
