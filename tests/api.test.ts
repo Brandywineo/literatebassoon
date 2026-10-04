@@ -20,6 +20,12 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   assert.equal((await call('/api/admin/overview')).status,401);
   assert.equal((await call('/api/admin/overview','GET',undefined,a.data.api_key)).status,401);
   const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
+  assert.equal((await call('/api/admin/drafts','POST',{service_id:'text-stats'},a.data.api_key)).status,401);
+  const draft=await call('/api/admin/drafts','POST',{service_id:'text-stats'},admin);assert.equal(draft.status,201);assert.match(draft.data.body,/test credits/);
+  assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'SENT'},admin)).status,400);
+  assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'APPROVED'},admin)).status,200);
+  assert.equal((await call('/api/admin/overview','GET',undefined,admin)).data.drafts[0].status,'APPROVED');
+  assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'ARCHIVED'},admin)).status,200);
   assert.equal((await call('/api/admin/operator','POST',{enabled:true,provider:'openai',model:'test',daily_limit:10},admin)).status,400);
   assert.equal((await call('/api/admin/agents/'+b.data.id,'POST',{disabled:true},admin)).status,200);
   assert.equal((await call('/api/me','GET',undefined,b.data.api_key)).status,401);

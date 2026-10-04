@@ -25,6 +25,11 @@ export function openStore(dir: string) {
     INSERT OR IGNORE INTO operator_state(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS admin_audit(id TEXT PRIMARY KEY,action TEXT NOT NULL,target TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
   column('operator_runs','error_code','TEXT');
+  column('operator_runs','started_ms','INTEGER');
+  column('operator_runs','finished_ms','INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS operator_monitor(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL,snapshot TEXT NOT NULL,signature TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS operator_events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS outreach_drafts(id TEXT PRIMARY KEY,service_id TEXT NOT NULL REFERENCES services(id),body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']
@@ -100,11 +105,11 @@ export function openStore(dir: string) {
     const job=db.prepare(`SELECT j.*,s.builtin FROM jobs j JOIN services s ON s.id=j.service_id WHERE j.status='QUEUED' AND s.builtin IN ('ai-summary','ai-rewrite') AND (j.lease_until IS NULL OR j.lease_until<?) ORDER BY j.rowid LIMIT 1`).get(Date.now());
     if(!job)return undefined;const token=randomUUID(),run=randomUUID();
     db.prepare('UPDATE jobs SET claim_token=?,lease_until=? WHERE id=?').run(token,Date.now()+300000,job.id);
-    db.prepare("INSERT INTO operator_runs(id,job_id,provider,model,status) VALUES(?,?,?,?,'RUNNING')").run(run,job.id,cfg.provider,cfg.model);
+    db.prepare("INSERT INTO operator_runs(id,job_id,provider,model,status,started_ms) VALUES(?,?,?,?,'RUNNING',?)").run(run,job.id,cfg.provider,cfg.model,Date.now());
     return {...job,token,run,provider:String(cfg.provider),model:String(cfg.model)};
   });}
   function finishAI(job:any,status:'COMPLETED'|'FAILED',errorCode:string|null=null){return transaction(()=>{
-    db.prepare('UPDATE operator_runs SET status=?,error_code=? WHERE id=?').run(status,errorCode,job.run);
+    db.prepare('UPDATE operator_runs SET status=?,error_code=?,finished_ms=? WHERE id=?').run(status,errorCode,Date.now(),job.run);
   });}
   function setOperator(enabled:boolean,provider:string,model:string,dailyLimit:number){transaction(()=>{
     db.prepare('UPDATE operator_settings SET enabled=?,provider=?,model=?,daily_limit=? WHERE id=1').run(enabled?1:0,provider,model,dailyLimit);

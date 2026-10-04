@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
+import { createOutreachDraft } from './operator.ts';
 import { openStore, hash } from './store.ts';
 
 const store=openStore(process.env.DATA_DIR || './data');
@@ -39,11 +40,17 @@ const server=createServer(async(req,res)=>{
         agents:store.db.prepare('SELECT id,name,description,credits,disabled,created_at FROM agents ORDER BY rowid DESC LIMIT 200').all(),
         services:store.db.prepare('SELECT s.*,a.name AS provider FROM services s LEFT JOIN agents a ON a.id=s.provider_id ORDER BY s.rowid DESC LIMIT 200').all(),
         jobs:store.db.prepare('SELECT j.id,j.status,j.price,j.created_at,s.name AS service,a.name AS buyer FROM jobs j JOIN services s ON s.id=j.service_id JOIN agents a ON a.id=j.buyer_id ORDER BY j.rowid DESC LIMIT 100').all(),
+        monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
+        activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
+        drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
         revenue:store.db.prepare("SELECT coalesce(sum(amount),0) AS credits FROM ledger WHERE kind='platform_test_revenue'").get()?.credits,
-        runs:store.db.prepare('SELECT id,job_id,provider,model,status,error_code,created_at FROM operator_runs ORDER BY rowid DESC LIMIT 30').all(),
+        runs:store.db.prepare('SELECT id,job_id,provider,model,status,error_code,created_at,started_ms,finished_ms FROM operator_runs ORDER BY rowid DESC LIMIT 30').all(),
         audit:store.db.prepare('SELECT action,target,created_at FROM admin_audit ORDER BY rowid DESC LIMIT 30').all()
       });
       if(method==='POST'&&path==='/api/admin/operator') {const b=await body(req);if(typeof b.enabled!=='boolean'||!['ollama','openai'].includes(b.provider))throw new Error('Invalid operator settings');const model=str(b.model,0,100,'Model');if(b.enabled&&!model.trim())throw new Error('Configure a model before enabling');if(b.enabled&&b.provider==='openai'&&!process.env.OPENAI_API_KEY)throw new Error('Set OPENAI_API_KEY in the private environment file first');const daily=integer(b.daily_limit);if(daily<1||daily>500)throw new Error('Daily request limit must be 1–500');store.setOperator(b.enabled,b.provider,model,daily);return send(res,200,{ok:true});}
+      if(method==='POST'&&path==='/api/admin/drafts'){const b=await body(req);return send(res,201,createOutreachDraft(store,str(b.service_id,1,80,'Service ID')));}
+      const draftMatch=path.match(/^\/api\/admin\/drafts\/([^/]+)$/);
+      if(method==='POST'&&draftMatch){const b=await body(req);if(!['APPROVED','ARCHIVED'].includes(b.status))throw new Error('Draft status must be APPROVED or ARCHIVED');store.transaction(()=>{const changed=store.db.prepare('UPDATE outreach_drafts SET status=? WHERE id=?').run(b.status,draftMatch[1]);if(!changed.changes)throw new Error('Draft not found');store.audit('outreach_draft_'+b.status.toLowerCase(),draftMatch[1]);});return send(res,200,{ok:true});}
       const adminMatch=path.match(/^\/api\/admin\/(agents|services|jobs)\/([^/]+)$/);
       if(method==='POST'&&adminMatch){const b=await body(req),[,kind,id]=adminMatch;store.transaction(()=>{
         if(kind==='agents'){if(typeof b.disabled!=='boolean')throw new Error('disabled must be boolean');const changed=store.db.prepare('UPDATE agents SET disabled=? WHERE id=?').run(b.disabled?1:0,id);if(!changed.changes)throw new Error('Agent not found');store.audit(b.disabled?'suspend_agent':'restore_agent',id);}

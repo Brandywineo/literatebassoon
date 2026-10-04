@@ -1,5 +1,6 @@
 import { openStore } from './store.ts';
 import { generate, ModelError } from './models.ts';
+import { inspectOperations } from './operator.ts';
 import { pathToFileURL } from 'node:url';
 
 export async function runOne(store:ReturnType<typeof openStore>,generateText=generate){
@@ -21,9 +22,11 @@ async function main(){
   const store=openStore(process.env.DATA_DIR||'./data');let stopped=false;
   const heartbeat=(status:string)=>store.db.prepare('UPDATE operator_state SET heartbeat=?,status=? WHERE id=1').run(Date.now(),status);
   const timer=setInterval(()=>heartbeat(store.settings().enabled?'online':'paused'),10000);timer.unref();
+  const monitor=()=>{try{inspectOperations(store);}catch{console.error('Kestrel monitoring check failed');}};
+  monitor();const monitorTimer=setInterval(monitor,60000);monitorTimer.unref();
   process.on('SIGTERM',()=>{stopped=true;});process.on('SIGINT',()=>{stopped=true;});
   console.log('Kestrel worker started; model processing follows admin settings');
   try {while(!stopped){heartbeat(store.settings().enabled?'online':'paused');await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));}}
-  finally{clearInterval(timer);heartbeat('offline');store.db.close();}
+  finally{clearInterval(timer);clearInterval(monitorTimer);heartbeat('offline');store.db.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(()=>{console.error('Worker stopped unexpectedly; inspect database access and configuration');process.exit(1);});
