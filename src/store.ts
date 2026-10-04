@@ -30,6 +30,7 @@ export function openStore(dir: string) {
   db.exec(`CREATE TABLE IF NOT EXISTS operator_monitor(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL,snapshot TEXT NOT NULL,signature TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS operator_events(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS outreach_drafts(id TEXT PRIMARY KEY,service_id TEXT NOT NULL REFERENCES services(id),body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS moltbook_state(id INTEGER PRIMARY KEY CHECK(id=1),name TEXT NOT NULL,status TEXT NOT NULL,checked_at INTEGER NOT NULL,claim_url TEXT,error_code TEXT);`);
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']

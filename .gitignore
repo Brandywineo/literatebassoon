@@ -2,3 +2,6 @@ data/
 .env
 node_modules/
 *.log
+
+moltbook.json
+moltbook.json.registering

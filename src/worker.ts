@@ -1,5 +1,6 @@
 import { openStore } from './store.ts';
 import { generate, ModelError } from './models.ts';
+import { syncMoltbook } from './moltbook.ts';
 import { inspectOperations } from './operator.ts';
 import { pathToFileURL } from 'node:url';
 
@@ -26,7 +27,7 @@ async function main(){
   monitor();const monitorTimer=setInterval(monitor,60000);monitorTimer.unref();
   process.on('SIGTERM',()=>{stopped=true;});process.on('SIGINT',()=>{stopped=true;});
   console.log('Kestrel worker started; model processing follows admin settings');
-  try {while(!stopped){heartbeat(store.settings().enabled?'online':'paused');await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));}}
+  try {while(!stopped){heartbeat(store.settings().enabled?'online':'paused');await syncMoltbook(store);await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));}}
   finally{clearInterval(timer);clearInterval(monitorTimer);heartbeat('offline');store.db.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(()=>{console.error('Worker stopped unexpectedly; inspect database access and configuration');process.exit(1);});

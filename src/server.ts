@@ -40,6 +40,7 @@ const server=createServer(async(req,res)=>{
         agents:store.db.prepare('SELECT id,name,description,credits,disabled,created_at FROM agents ORDER BY rowid DESC LIMIT 200').all(),
         services:store.db.prepare('SELECT s.*,a.name AS provider FROM services s LEFT JOIN agents a ON a.id=s.provider_id ORDER BY s.rowid DESC LIMIT 200').all(),
         jobs:store.db.prepare('SELECT j.id,j.status,j.price,j.created_at,s.name AS service,a.name AS buyer FROM jobs j JOIN services s ON s.id=j.service_id JOIN agents a ON a.id=j.buyer_id ORDER BY j.rowid DESC LIMIT 100').all(),
+        moltbook:store.db.prepare('SELECT name,status,checked_at,claim_url,error_code FROM moltbook_state WHERE id=1').get(),
         monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
         activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
         drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
