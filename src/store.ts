@@ -99,7 +99,7 @@ export function openStore(dir: string) {
     if(Number(today.n)>=Number(cfg.daily_limit)) return undefined;
     const job=db.prepare(`SELECT j.*,s.builtin FROM jobs j JOIN services s ON s.id=j.service_id WHERE j.status='QUEUED' AND s.builtin IN ('ai-summary','ai-rewrite') AND (j.lease_until IS NULL OR j.lease_until<?) ORDER BY j.rowid LIMIT 1`).get(Date.now());
     if(!job)return undefined;const token=randomUUID(),run=randomUUID();
-    db.prepare('UPDATE jobs SET claim_token=?,lease_until=? WHERE id=?').run(token,Date.now()+180000,job.id);
+    db.prepare('UPDATE jobs SET claim_token=?,lease_until=? WHERE id=?').run(token,Date.now()+300000,job.id);
     db.prepare("INSERT INTO operator_runs(id,job_id,provider,model,status) VALUES(?,?,?,?,'RUNNING')").run(run,job.id,cfg.provider,cfg.model);
     return {...job,token,run,provider:String(cfg.provider),model:String(cfg.model)};
   });}
