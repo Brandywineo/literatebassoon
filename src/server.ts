@@ -1,3 +1,4 @@
+import {autonomyStatus,setAutonomy} from './social-autonomy.ts';
 import {openPayments,asset,balance} from './payments.ts';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -50,7 +51,7 @@ const server=createServer(async(req,res)=>{
         moltbook:store.db.prepare('SELECT name,status,checked_at,claim_url,error_code FROM moltbook_state WHERE id=1').get(),
         monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
         activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
-        social:{profile_description:profileDescription,scan:store.db.prepare('SELECT checked_at,error_code FROM social_scan WHERE id=1').get(),discussions:store.db.prepare('SELECT * FROM social_discussions WHERE full_content=1 ORDER BY seen_at DESC LIMIT 30').all(),replies:store.db.prepare('SELECT id,post_id,body,status,created_at,attempted_at,comment_id,challenge,expires_at,error_code FROM social_replies ORDER BY rowid DESC LIMIT 30').all()},
+        social:{autonomy:autonomyStatus(store),profile_description:profileDescription,scan:store.db.prepare('SELECT checked_at,error_code FROM social_scan WHERE id=1').get(),discussions:store.db.prepare('SELECT * FROM social_discussions WHERE full_content=1 ORDER BY seen_at DESC LIMIT 30').all(),replies:store.db.prepare('SELECT id,post_id,body,status,created_at,attempted_at,comment_id,challenge,expires_at,error_code FROM social_replies ORDER BY rowid DESC LIMIT 30').all()},
         referrals:store.db.prepare(`SELECT a.referral,count(DISTINCT a.id) AS registrations,count(DISTINCT CASE WHEN j.status='COMPLETED' THEN j.id END) AS completed_jobs FROM agents a LEFT JOIN jobs j ON j.buyer_id=a.id WHERE a.referral IS NOT NULL GROUP BY a.referral`).all(),
         publications:store.db.prepare('SELECT draft_id,title,submolt,status,attempted_at,post_id,challenge,expires_at,error_code FROM moltbook_publications ORDER BY attempted_at DESC LIMIT 30').all(),
         drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
@@ -66,6 +67,7 @@ const server=createServer(async(req,res)=>{
       if(method==='POST'&&withdrawalAdmin){const b=await body(req),[,id,action]=withdrawalAdmin;return send(res,200,action==='lock'?payments.lockWithdrawal(id):action==='broadcast'?payments.attachPayout(id,b):action==='confirm'?await payments.confirmPayout(id):payments.cancelWithdrawal(id));}
       if(method==='POST'&&path==='/api/admin/operator') {const b=await body(req);if(typeof b.enabled!=='boolean'||!['ollama','openai'].includes(b.provider))throw new Error('Invalid operator settings');const model=str(b.model,0,100,'Model');if(b.enabled&&!model.trim())throw new Error('Configure a model before enabling');if(b.enabled&&b.provider==='openai'&&!process.env.OPENAI_API_KEY)throw new Error('Set OPENAI_API_KEY in the private environment file first');const daily=integer(b.daily_limit);if(daily<1||daily>500)throw new Error('Daily request limit must be 1–500');store.setOperator(b.enabled,b.provider,model,daily);return send(res,200,{ok:true});}
       if(method==='POST'&&path==='/api/admin/drafts'){const b=await body(req);return send(res,201,createOutreachDraft(store,str(b.service_id,1,80,'Service ID')));}
+      if(method==='POST'&&path==='/api/admin/social/autonomy'){const b=await body(req);return send(res,200,setAutonomy(store,b.enabled));}
       if(method==='POST'&&path==='/api/admin/social/discover')return send(res,200,await discoverDiscussions(store));
       if(method==='POST'&&path==='/api/admin/social/profile')return send(res,200,await updateSocialProfile(store));
       if(method==='POST'&&path==='/api/admin/social/drafts'){const b=await body(req);return send(res,201,draftReply(store,str(b.post_id,1,100,'Post ID')));}

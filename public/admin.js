@@ -42,7 +42,9 @@ $('#draft-form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySel
 
 $('#introduction').onclick=async()=>{try{await api('introduction',{});await load();toast('Introduction prepared. Review and approve it before publishing.');}catch(e){toast(e.message);}};
 
+let autonomousEnabled=false;
 function renderSocial(social){
+ autonomousEnabled=Boolean(social.autonomy?.enabled);$('#social-autonomy-status').textContent=(autonomousEnabled?'Autonomous replies enabled':'Autonomous replies paused')+' · '+(social.autonomy?.blocked||'ready')+' · model attempts today: '+(social.autonomy?.generation_attempts||0)+(social.autonomy?.error_code?' · '+social.autonomy.error_code:'');$('#social-autonomy-toggle').textContent=autonomousEnabled?'Pause autonomous replies':'Enable autonomous replies';
  $('#social-profile').textContent=social.profile_description;
  $('#social-scan').textContent=social.scan?'Last discovery: '+new Date(social.scan.checked_at).toLocaleString()+(social.scan.error_code?' · '+social.scan.error_code:''):'Waiting for first discovery.';
  $('#social-discussions').replaceChildren();for(const p of social.discussions){const card=document.createElement('article');card.className='job';const title=document.createElement('strong');title.textContent=p.title+' · '+p.author+' · '+p.community+' · '+(p.source_created_at?new Date(p.source_created_at).toLocaleString():'Post date unavailable');const text=document.createElement('pre');text.textContent=p.body;const link=document.createElement('a');link.textContent='Read full discussion';link.href='https://www.moltbook.com/post/'+p.id;link.target='_blank';link.rel='noopener noreferrer';card.append(title,text,link);if(!social.replies.some(r=>r.post_id===p.id))card.append(button('Draft a helpful reply',()=>api('social/drafts',{post_id:p.id})));$('#social-discussions').append(card);}
@@ -65,3 +67,5 @@ $('#paid-price-form').onsubmit=async e=>{e.preventDefault();try{const d=Object.f
 $('#platform-withdraw-form').onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(e.target)),f=e.target,fingerprint=JSON.stringify(d);if(f.dataset.requestBody!==fingerprint){f.dataset.requestBody=fingerprint;f.dataset.requestKey=crypto.randomUUID();}const res=await fetch('/api/admin/payments/withdraw',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json','Idempotency-Key':f.dataset.requestKey},body:JSON.stringify({...d,amount:atomic(d.amount)})});const result=await res.json();if(!res.ok)throw Error(result.error);f.reset();delete f.dataset.requestBody;delete f.dataset.requestKey;await load();toast('Platform withdrawal requested');}catch(e){toast(e.message);}};
 
 initAdminPages();
+
+$('#social-autonomy-toggle').onclick=async()=>{try{await api('social/autonomy',{enabled:!autonomousEnabled});await load();}catch(e){toast(e.message);}};

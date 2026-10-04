@@ -1,3 +1,4 @@
+import {runSocialCycle} from './social-autonomy.ts';
 import { openStore } from './store.ts';
 import { generate, ModelError } from './models.ts';
 import { discoverDiscussions } from './social.ts';
@@ -28,7 +29,13 @@ async function main(){
   monitor();const monitorTimer=setInterval(monitor,60000);monitorTimer.unref();
   process.on('SIGTERM',()=>{stopped=true;});process.on('SIGINT',()=>{stopped=true;});
   console.log('Kestrel worker started; model processing follows admin settings');
-  try {while(!stopped){heartbeat(store.settings().enabled?'online':'paused');await syncMoltbook(store);await discoverDiscussions(store);await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));}}
+  let socialFlight:Promise<void>|undefined;
+  try {while(!stopped){
+    heartbeat(store.settings().enabled?'online':'paused');
+    // Social I/O runs separately so long model calls cannot hold the customer queue.
+    if(!socialFlight)socialFlight=(async()=>{try{await syncMoltbook(store);await discoverDiscussions(store);await runSocialCycle(store);}catch{console.error('Kestrel social cycle failed; job processing continues');}})().finally(()=>{socialFlight=undefined;});
+    await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));
+  }await socialFlight; }
   finally{clearInterval(timer);clearInterval(monitorTimer);heartbeat('offline');store.db.close();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(()=>{console.error('Worker stopped unexpectedly; inspect database access and configuration');process.exit(1);});
