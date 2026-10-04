@@ -39,6 +39,20 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS social_replies(id TEXT PRIMARY KEY,post_id TEXT UNIQUE NOT NULL REFERENCES social_discussions(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT',created_at TEXT DEFAULT CURRENT_TIMESTAMP,attempted_at INTEGER,content_hash TEXT,comment_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT);
     CREATE UNIQUE INDEX IF NOT EXISTS social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;`);
   db.exec(`CREATE TABLE IF NOT EXISTS social_autonomy(id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT); INSERT OR IGNORE INTO social_autonomy(id) VALUES(1); CREATE TABLE IF NOT EXISTS social_generation(id TEXT PRIMARY KEY,post_id TEXT NOT NULL,started_at INTEGER NOT NULL,status TEXT NOT NULL,error_code TEXT);`);
+  if(!db.prepare('PRAGMA table_info(social_replies)').all().some(c=>c.name==='parent_id')) {
+    db.exec(`CREATE TABLE social_replies_next(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES social_discussions(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT',created_at TEXT DEFAULT CURRENT_TIMESTAMP,attempted_at INTEGER,content_hash TEXT,comment_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT,parent_id TEXT);
+      INSERT INTO social_replies_next(id,post_id,body,status,created_at,attempted_at,content_hash,comment_id,challenge,verification_code,expires_at,error_code) SELECT id,post_id,body,status,created_at,attempted_at,content_hash,comment_id,challenge,verification_code,expires_at,error_code FROM social_replies;
+      DROP TABLE social_replies; ALTER TABLE social_replies_next RENAME TO social_replies;
+      CREATE UNIQUE INDEX social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;
+      CREATE UNIQUE INDEX social_reply_root ON social_replies(post_id) WHERE parent_id IS NULL;
+      CREATE UNIQUE INDEX social_reply_parent ON social_replies(parent_id) WHERE parent_id IS NOT NULL;`);
+  }
+  column('social_generation','parent_id','TEXT');
+  column('social_autonomy','last_cycle_at','INTEGER NOT NULL DEFAULT 0');
+  column('social_autonomy','last_reason','TEXT');
+  column('social_autonomy','next_cycle_at','INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS social_thread_scan(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT,threads_read INTEGER NOT NULL DEFAULT 0); INSERT OR IGNORE INTO social_thread_scan(id) VALUES(1);
+    CREATE TABLE IF NOT EXISTS social_incoming(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES social_discussions(id),parent_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,source_created_at TEXT NOT NULL,seen_at INTEGER NOT NULL);`);
   column('social_discussions','full_content','INTEGER NOT NULL DEFAULT 0');
   column('social_discussions','source_created_at','TEXT');
   for(const [id,name,description,builtin] of [

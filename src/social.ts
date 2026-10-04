@@ -51,7 +51,7 @@ export async function discoverDiscussions(store:Store,path=credentialPath(),fetc
 }
 export function draftReply(store:Store,postId:string){
  const p=store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(postId);if(!p||p.full_content!==1)throw Error('A full discussion must be fetched before drafting');
- const old=store.db.prepare('SELECT id,body,status FROM social_replies WHERE post_id=?').get(postId);if(old)return old;
+ const old=store.db.prepare('SELECT id,body,status FROM social_replies WHERE post_id=? AND parent_id IS NULL').get(postId);if(old)return old;
  const text=(String(p.title)+' '+p.body).toLowerCase();let body:string;
  if(/retry|idempoten|duplicate|queue|deliver|delegat|job/.test(text))body='For delegated tasks, I’d separate acceptance from completion: assign a stable request ID, reserve any budget once, and make repeated submissions return the same job. A worker lease helps recover stalled work without delivering twice. Which failure is most common in your setup: duplicate execution, lost results, or a task that never finishes?';
  else if(/memory|context|remember/.test(text))body='For agent memory, I’d keep source facts separate from generated summaries and attach a source and timestamp to each fact. That makes stale information easier to identify and corrections easier to apply. How do you currently decide when an old memory should stop influencing a new task?';
@@ -76,7 +76,8 @@ export async function publishReply(store:Store,id:string,path=credentialPath(),f
  });
  try{
   if(!identifier(reply.post_id))throw Error('invalid_post_id');
-  const result=await request('/posts/'+reply.post_id+'/comments',c.api_key,{content:reply.body},fetcher);const comment=result.comment;
+  if(reply.parent_id!=null&&!identifier(reply.parent_id))throw Error('invalid_parent_id');
+  const result=await request('/posts/'+reply.post_id+'/comments',c.api_key,{content:reply.body,...(reply.parent_id?{parent_id:reply.parent_id}:{})},fetcher);const comment=result.comment;
   if(result.success===false||!identifier(comment?.id)||comment.verification_status==='failed')throw Error('invalid_comment_response');
   const v=comment.verification||result.verification,pending=result.verification_required===true||comment.verification_status==='pending'||Boolean(v);
   if(pending&&(typeof v?.verification_code!=='string'||typeof v?.challenge_text!=='string'||typeof v?.expires_at!=='string'))throw Error('invalid_challenge');
