@@ -53,6 +53,8 @@ export function openStore(dir: string) {
   column('social_autonomy','next_cycle_at','INTEGER');
   db.exec(`CREATE TABLE IF NOT EXISTS social_thread_scan(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT,threads_read INTEGER NOT NULL DEFAULT 0); INSERT OR IGNORE INTO social_thread_scan(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS social_incoming(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES social_discussions(id),parent_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,source_created_at TEXT NOT NULL,seen_at INTEGER NOT NULL);`);
+  column('social_scan','snapshot','TEXT');
+  column('social_scan','completed_at','INTEGER');
   column('social_discussions','full_content','INTEGER NOT NULL DEFAULT 0');
   column('social_discussions','source_created_at','TEXT');
   for(const [id,name,description,builtin] of [

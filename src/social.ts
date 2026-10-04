@@ -1,7 +1,6 @@
 import {pathToFileURL} from 'node:url';
 import {openStore,hash} from './store.ts';
 import {request,credentials,credentialPath} from './moltbook.ts';
-import {existsSync} from 'node:fs';
 type Store=ReturnType<typeof openStore>;
 const identifier=(v:unknown):v is string=>typeof v==='string'&&/^[a-zA-Z0-9-]{1,100}$/.test(v);
 const errorCode=(e:unknown)=>e instanceof Error&&/^moltbook_http_\d{3}$/.test(e.message)?e.message:'moltbook_connection_or_response_error';
@@ -14,41 +13,8 @@ export async function updateSocialProfile(store:Store,path=credentialPath(),fetc
   store.audit('moltbook_profile_updated',c.name);return {ok:true,description:profileDescription};
  }catch(e){throw Error(errorCode(e));}
 }
-export async function discoverDiscussions(store:Store,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now()){
- if(!existsSync(path))return {skipped:true};
- const last=store.db.prepare('SELECT checked_at FROM social_scan WHERE id=1').get();if(last&&now-Number(last.checked_at)<1800000)return {skipped:true};
- // Reserve cadence across worker and admin. Public content is data, never instructions.
- const reserved=store.transaction(()=>{const current=store.db.prepare('SELECT checked_at FROM social_scan WHERE id=1').get();if(current&&now-Number(current.checked_at)<1800000)return false;store.db.prepare('INSERT INTO social_scan(id,checked_at) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at,error_code=NULL').run(now);return true;});if(!reserved)return {skipped:true};
- try{
-  const c=identity(path),q=new URLSearchParams({q:'reliable agent tools delegated tasks job delivery',type:'posts',limit:'30'});
-  const search=await request('/search?'+q,c.api_key,undefined,fetcher);if(search.success===false||!Array.isArray(search.results))throw Error('invalid_search');
-  // Supplement repetitive search results with a bounded recent feed.
-  let recent:any[]=[];try{const feed=await request('/posts?sort=new&limit=20',c.api_key,undefined,fetcher);if(Array.isArray(feed.posts))recent=feed.posts.slice(0,20);}catch{}
-  const candidates=[...recent.filter(p=>/agent|tool|task|queue|memory|api|delegat|workflow/i.test(String(p.title||'')+' '+String(p.content||''))),...search.results.slice(0,30)];
-  const authors=new Map<string,number>(),seen=new Set<string>(),selected:any[]=[];
-  for(const p of candidates){
-   if((p.type&&p.type!=='post')||!identifier(p.id)||typeof p.author?.name!=='string'||p.author.name.toLowerCase()===c.name.toLowerCase()||seen.has(p.id))continue;
-   if(typeof p.created_at==='string'&&Number.isFinite(Date.parse(p.created_at))&&now-Date.parse(p.created_at)>30*86400000)continue;
-   const author=p.author.name.toLowerCase();if((authors.get(author)||0)>=2)continue;
-   seen.add(p.id);authors.set(author,(authors.get(author)||0)+1);selected.push(p);if(selected.length===6)break;
-  }
-  let found=0,failed=0;
-  // Detail responses replace snippets. No more than six detail reads per scan.
-  const details=await Promise.allSettled(selected.map(candidate=>request('/posts/'+candidate.id,c.api_key,undefined,fetcher)));
-  const acceptedAuthors=new Map<string,number>();
-  for(let i=0;i<selected.length;i++){const candidate=selected[i];try{
-   const outcome=details[i];if(outcome.status==='rejected')throw Error('post_detail_unavailable');const detail=outcome.value,p=detail.post;
-   if(detail.success===false||p?.id!==candidate.id||typeof p.title!=='string'||typeof p.content!=='string'||typeof p.author?.name!=='string'||p.content.length>20000||p.is_spam===true||p.is_deleted===true)throw Error('invalid_post_detail');
-   const author=p.author.name.toLowerCase();if(author===c.name.toLowerCase()||(acceptedAuthors.get(author)||0)>=2)continue;
-   const created=typeof p.created_at==='string'&&Number.isFinite(Date.parse(p.created_at))?p.created_at:null;
-   if(created&&now-Date.parse(created)>30*86400000)continue;
-   store.db.prepare('INSERT INTO social_discussions(id,title,body,author,community,seen_at,full_content,source_created_at) VALUES(?,?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,author=excluded.author,community=excluded.community,seen_at=excluded.seen_at,full_content=1,source_created_at=excluded.source_created_at').run(p.id,p.title.slice(0,300),p.content,p.author.name.slice(0,80),String(p.submolt?.name||candidate.submolt?.name||'general').slice(0,80),now,created);acceptedAuthors.set(author,(acceptedAuthors.get(author)||0)+1);found++;
-  }catch{failed++;}}
-  if(failed)store.db.prepare('UPDATE social_scan SET error_code=? WHERE id=1').run('post_details_unavailable_'+failed);
-  store.db.exec('DELETE FROM social_discussions WHERE id NOT IN (SELECT post_id FROM social_replies) AND id NOT IN (SELECT id FROM social_discussions ORDER BY seen_at DESC LIMIT 100)');
-  return {found,detail_failures:failed};
- }catch(e){const code=errorCode(e);store.db.prepare('UPDATE social_scan SET error_code=? WHERE id=1').run(code);return {error_code:code};}
-}
+export {discoverDiscussions} from './social-discovery.ts';
+import {discoverDiscussions} from './social-discovery.ts';
 export function draftReply(store:Store,postId:string){
  const p=store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(postId);if(!p||p.full_content!==1)throw Error('A full discussion must be fetched before drafting');
  const old=store.db.prepare('SELECT id,body,status FROM social_replies WHERE post_id=? AND parent_id IS NULL').get(postId);if(old)return old;
