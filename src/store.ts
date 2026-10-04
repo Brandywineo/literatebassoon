@@ -1,3 +1,4 @@
+import {initMoney,reserveMoney,settleMoney,asset} from './payments.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
@@ -48,6 +49,7 @@ export function openStore(dir: string) {
     ['text-stats','Text statistics','Count words, characters and lines in supplied text.','Text',1,'stats'],
     ['sha256','SHA-256 digest','Create a SHA-256 digest of supplied text.','Utilities',1,'hash']
   ]) db.prepare(`INSERT OR IGNORE INTO services(id,name,description,category,price,builtin) VALUES(?,?,?,?,?,?)`).run(...s);
+  initMoney(db);
   db.exec('COMMIT');
   function transaction<T>(fn:()=>T):T { db.exec('BEGIN IMMEDIATE'); try { const v=fn(); db.exec('COMMIT'); return v; } catch(e) { db.exec('ROLLBACK'); throw e; } }
   function register(name:string, description:string, referral:string|null=null) {
@@ -56,10 +58,10 @@ export function openStore(dir: string) {
     transaction(()=>{ db.prepare(`INSERT INTO agents(id,name,description,token_hash,credits,referral) VALUES(?,?,?,?,100,?)`).run(id,name,description,hash(token),referral); db.prepare(`INSERT INTO ledger(id,agent_id,amount,kind) VALUES(?,?,100,?)`).run(randomUUID(),id,'welcome_test_credits'); });
     return {id,name,api_key:token,credits:100,credit_type:'test_only'};
   }
-  function submit(buyer:string, service:string, input:string, key:string) {
+  function submit(buyer:string, service:string, input:string, key:string, paymentAsset:string|null=null,expectedAmount:string|null=null) {
     return transaction(()=>{
       const previous=db.prepare(`SELECT * FROM jobs WHERE buyer_id=? AND idempotency_key=?`).get(buyer,key);
-      if(previous) { if(previous.service_id!==service || previous.input!==input) throw new Error('Idempotency key already used for a different request'); return previous; }
+      if(previous) { if(previous.service_id!==service || previous.input!==input || (previous.money_asset||null)!==paymentAsset || paymentAsset&&previous.money_amount!==expectedAmount) throw new Error('Idempotency key already used for a different request'); return previous; }
       if(!db.prepare('SELECT id FROM agents WHERE id=? AND disabled=0').get(buyer)) throw new Error('Agent is suspended');
       const s=db.prepare(`SELECT * FROM services WHERE id=? AND active=1`).get(service);
       if(!s) throw new Error('Service not found');
@@ -73,11 +75,12 @@ export function openStore(dir: string) {
         if(JSON.parse(input).text.length>12000) throw new Error('AI input exceeds 12000 characters');
       }
       if(s.provider_id===buyer) throw new Error('You cannot buy your own service');
-      const debit=db.prepare(`UPDATE agents SET credits=credits-? WHERE id=? AND credits>=?`).run(s.price,buyer,s.price);
-      if(!debit.changes) throw new Error('Insufficient test credits');
       const id=randomUUID(),fee=Math.floor(Number(s.price)*0.1);
-      db.prepare(`INSERT INTO jobs(id,buyer_id,service_id,status,input,price,fee,idempotency_key) VALUES(?,?,?,'QUEUED',?,?,?,?)`).run(id,buyer,service,input,s.price,fee,key);
-      db.prepare(`INSERT INTO ledger(id,agent_id,job_id,amount,kind) VALUES(?,?,?,?,?)`).run(randomUUID(),buyer,id,-Number(s.price),'reserved');
+      let money:{amount:string;fee:string}|undefined;
+      if(paymentAsset){if(process.env.PAYMENTS_ALLOW_LIVE!=='1'||!db.prepare('SELECT enabled FROM money_settings WHERE id=1').get()?.enabled)throw Error('Real payments are paused');const quote=db.prepare('SELECT amount FROM money_prices WHERE service_id=? AND asset=?').get(service,paymentAsset);if(!quote||expectedAmount!==quote.amount)throw Error('Paid price changed; fetch services and accept the current price');money=reserveMoney(db,buyer,service,asset(paymentAsset),id);}
+      else {const debit=db.prepare(`UPDATE agents SET credits=credits-? WHERE id=? AND credits>=?`).run(s.price,buyer,s.price);if(!debit.changes)throw Error('Insufficient test credits');}
+      db.prepare(`INSERT INTO jobs(id,buyer_id,service_id,status,input,price,fee,idempotency_key,money_asset,money_amount,money_fee) VALUES(?,?,?,'QUEUED',?,?,?,?,?,?,?)`).run(id,buyer,service,input,paymentAsset?0:s.price,paymentAsset?0:fee,key,paymentAsset,money?.amount||null,money?.fee||null);
+      if(!paymentAsset)db.prepare(`INSERT INTO ledger(id,agent_id,job_id,amount,kind) VALUES(?,?,?,?,?)`).run(randomUUID(),buyer,id,-Number(s.price),'reserved');
       return db.prepare(`SELECT * FROM jobs WHERE id=?`).get(id);
     });
   }
@@ -89,6 +92,7 @@ export function openStore(dir: string) {
       if(claim && job.claim_token!==claim) throw new Error('Worker lease lost');
       if(job.status!=='QUEUED') throw new Error('Job already settled');
       db.prepare(`UPDATE jobs SET status=?,result=?,completed_at=CURRENT_TIMESTAMP WHERE id=?`).run(status,result,id);
+      if(job.money_asset){settleMoney(db,job,status);return db.prepare(`SELECT * FROM jobs WHERE id=?`).get(id);}
       const credit = status==='COMPLETED' ? Number(job.price)-Number(job.fee) : Number(job.price);
       const recipient = status==='COMPLETED' ? job.provider_id : job.buyer_id;
       if(recipient) { db.prepare(`UPDATE agents SET credits=credits+? WHERE id=?`).run(credit,recipient); db.prepare(`INSERT INTO ledger(id,agent_id,job_id,amount,kind) VALUES(?,?,?,?,?)`).run(randomUUID(),recipient,id,credit,status==='COMPLETED'?'earned':'refund'); }

@@ -7,7 +7,7 @@ import { once } from 'node:events';
 
 test('HTTP registration, discovery, job delivery and private results',async()=>{
  const dir=mkdtempSync(tmpdir()+'/exchange-api-');
- const child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,PORT:'19043',DATA_DIR:dir,ADMIN_KEY:'test-admin-key-with-more-than-32-characters',OPENAI_API_KEY:''},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,PORT:'19043',DATA_DIR:dir,ADMIN_KEY:'test-admin-key-with-more-than-32-characters',OPENAI_API_KEY:'',PAYMENTS_ALLOW_LIVE:'0',BSC_RPC_URL:'',BSC_RPC_SECONDARY_URL:'',BSC_DEPOSIT_ADDRESSES:''},stdio:['ignore','pipe','pipe']});
  let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);
  try {
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Startup timed out: '+stderr)),5000);child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',()=>{clearTimeout(timeout);reject(Error('Server exited: '+stderr));});});
@@ -19,6 +19,16 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   const admin='test-admin-key-with-more-than-32-characters';
   assert.equal((await call('/api/admin/overview')).status,401);
   assert.equal((await call('/api/admin/overview','GET',undefined,a.data.api_key)).status,401);
+  assert.equal((await call('/api/payments')).data.enabled,false);
+  assert.equal((await call('/api/wallet')).status,401);
+  const wallet=await call('/api/wallet','GET',undefined,a.data.api_key);assert.equal(wallet.status,200);assert.equal(wallet.data.balances[0].amount,'0');assert.equal(wallet.data.balances[1].amount,'0');
+  assert.equal((await call('/api/wallet/address','POST',{},a.data.api_key)).status,400);
+  assert.equal((await call('/api/admin/payments','POST',{enabled:true},a.data.api_key)).status,401);
+  assert.equal((await call('/api/admin/payments','POST',{enabled:true},admin)).status,400);
+  assert.equal((await call('/api/admin/payments','POST',{enabled:false},admin)).status,200);
+  assert.equal((await call('/api/admin/payments/price','POST',{service_id:'text-stats',asset:'USDT',amount:'50000000000000000'},admin)).status,200);
+  assert.equal((await call('/api/services')).data.services.find(s=>s.id==='text-stats').paid_prices[0].amount,'50000000000000000');
+  assert.equal((await call('/api/services/text-stats/prices','POST',{asset:'USDT',amount:'1'},a.data.api_key)).status,403);
   const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.referrals[0].referral,'kestrelfield');assert.equal(overview.data.referrals[0].registrations,1);assert.equal(overview.data.referrals[0].completed_jobs,0);assert.equal(overview.data.publications.length,0);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
   assert.equal((await call('/api/admin/drafts','POST',{service_id:'text-stats'},a.data.api_key)).status,401);
   assert.equal((await call('/api/admin/social/discover','POST',{},a.data.api_key)).status,401);assert.equal((await call('/api/admin/social/profile','POST',{},a.data.api_key)).status,401);assert.ok(Array.isArray(overview.data.social.discussions));assert.ok(!JSON.stringify(overview.data.social).includes('verification_code'));
