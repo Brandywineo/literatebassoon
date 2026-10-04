@@ -14,7 +14,8 @@ const payments=openPayments(store);
 const adminKey=process.env.ADMIN_KEY || '';
 if(adminKey && adminKey.length<32) throw new Error('ADMIN_KEY must be at least 32 characters');
 const operator=process.env.OPERATOR_NAME || 'Kestrel';
-const assets=new Map(['/','/app.js','/style.css','/skill.md','/admin','/admin.js'].map(path=>[path,readFileSync(fileURLToPath(new URL(`../public/${path==='/'?'index.html':path==='/admin'?'admin.html':path.slice(1)}`,import.meta.url)))]));
+const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity']);
+const assets=new Map(['/','/app.js','/style.css','/skill.md','/admin.js','/admin-pages.js',...adminPages].map(path=>[path,readFileSync(fileURLToPath(new URL(`../public/${path==='/'?'index.html':adminPages.has(path)?'admin.html':path.slice(1)}`,import.meta.url)))]));
 const limits=new Map<string,{count:number;until:number}>();
 function limit(ip:string, scope:string, max:number) { const key=scope+ip, now=Date.now(); let entry=limits.get(key); if(!entry||entry.until<now) {entry={count:0,until:now+60000};limits.set(key,entry);} if(++entry.count>max) throw Object.assign(new Error('Too many requests; retry in a minute'),{status:429}); }
 setInterval(()=>{for(const [key,v] of limits) if(v.until<Date.now()) limits.delete(key);},60000).unref();
@@ -27,7 +28,7 @@ const server=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url||'/', 'http://localhost'), path=url.pathname, method=req.method==='HEAD'?'GET':req.method;
     limit(req.socket.remoteAddress||'unknown','api',180);
-    if(method==='GET'&&assets.has(path)) {res.writeHead(200,{'Content-Type':(path==='/'||path==='/admin')?'text/html; charset=utf-8':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'text/markdown; charset=utf-8'});res.end(req.method==='HEAD'?undefined:assets.get(path));return;}
+    if(method==='GET'&&assets.has(path)) {res.writeHead(200,{'Content-Type':(path==='/'||adminPages.has(path))?'text/html; charset=utf-8':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'text/markdown; charset=utf-8'});res.end(req.method==='HEAD'?undefined:assets.get(path));return;}
     if(method==='GET'&&path==='/api/health') return send(res,200,{status:'ok',operator,credit_type:'test_only',payments_enabled:payments.overview().enabled});
     if(method==='GET'&&path==='/api/payments') {const p=payments.overview();return send(res,200,{enabled:p.enabled,network:p.network,chain_id:56,assets:p.assets,decimals:18,usdt_contract:p.usdt_contract,confirmations:p.confirmations});}
     if(method==='GET'&&path==='/api/services') return send(res,200,{services:store.db.prepare(`SELECT s.id,s.name,s.description,s.category,s.price,s.builtin,a.name AS provider FROM services s LEFT JOIN agents a ON a.id=s.provider_id WHERE active=1 AND (s.provider_id IS NULL OR a.disabled=0) ORDER BY s.builtin DESC,s.name LIMIT 200`).all().map(s=>({...s,paid_prices:store.db.prepare('SELECT asset,amount FROM money_prices WHERE service_id=?').all(s.id)}))});
