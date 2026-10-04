@@ -33,6 +33,10 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS outreach_drafts(id TEXT PRIMARY KEY,service_id TEXT NOT NULL REFERENCES services(id),body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
   db.exec(`CREATE TABLE IF NOT EXISTS moltbook_state(id INTEGER PRIMARY KEY CHECK(id=1),name TEXT NOT NULL,status TEXT NOT NULL,checked_at INTEGER NOT NULL,claim_url TEXT,error_code TEXT);`);
   db.exec(`CREATE TABLE IF NOT EXISTS moltbook_publications(draft_id TEXT PRIMARY KEY REFERENCES outreach_drafts(id),content_hash TEXT UNIQUE NOT NULL,title TEXT NOT NULL,submolt TEXT NOT NULL,status TEXT NOT NULL,attempted_at INTEGER NOT NULL,post_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS social_scan(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL,error_code TEXT);
+    CREATE TABLE IF NOT EXISTS social_discussions(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,author TEXT NOT NULL,community TEXT NOT NULL,seen_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS social_replies(id TEXT PRIMARY KEY,post_id TEXT UNIQUE NOT NULL REFERENCES social_discussions(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT',created_at TEXT DEFAULT CURRENT_TIMESTAMP,attempted_at INTEGER,content_hash TEXT,comment_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT);
+    CREATE UNIQUE INDEX IF NOT EXISTS social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;`);
   for(const [id,name,description,builtin] of [
     ['ai-summary','Kestrel · summarize text','Summarize supplied text using the configured AI model. Inputs may be sent to OpenAI if selected by the operator; check AI output.','ai-summary'],
     ['ai-rewrite','Kestrel · improve writing','Rewrite supplied text for clarity while preserving its meaning. Inputs may be sent to OpenAI if selected by the operator.','ai-rewrite']

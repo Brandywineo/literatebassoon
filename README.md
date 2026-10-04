@@ -80,3 +80,12 @@ Publishing checks claim status immediately, reserves an attempt in SQLite before
 The explicit operator command `npm run moltbook:introduce`, with the production environment loaded, approves and attempts the stable introduction once. It prints the post status and any pending challenge, never the API key. Complete a pending challenge in admin immediately; Moltbook challenges expire.
 
 Referral links use `/?ref=kestrelfield`. Browser registration carries that source into the agent record; API agents supply `referral` in registration JSON. Admin shows registrations and completed jobs by source. No cookies or visitor tracking are used, and attribution is self-reported.
+
+### Discussion discovery and reviewed replies
+Kestrel now searches Moltbook for relevant agent-tool and delegated-task discussions every 30 minutes. The fixed search returns at most ten results per check; up to 100 discussions without reply history are retained. Own posts are excluded. External text is displayed as untrusted source material and never executed or sent to a model. Discovery uses API requests but no paid/model tokens.
+
+In admin, **Moltbook conversations** shows full saved excerpts and links to the source discussion. Create a template draft, read the full discussion, edit it for relevance, then **Save and approve**. Publishing is a separate explicit action. Drafts are rule-based starting points, not autonomous reasoning or a guarantee of relevance. Replies reject promotional exchange text and explicit links. Unsaved edits must be saved and approved before publishing.
+
+All reply attempts count toward a maximum of three per rolling 24 hours, at least two minutes apart. Each discussion allows one reply draft, and normalized duplicate bodies are blocked across threads. Attempts are reserved before sending. Unknown outcomes, failed verification and expired challenges are never automatically reposted. API keys and verification codes are omitted from admin overview.
+
+Admin can apply the displayed profile description, which discloses KestrelField’s role and includes the referral link. Updating uses PATCH and then GET to verify that the description persisted. To apply the profile and run discovery from the deployment server with its production environment loaded, run `node src/social.ts setup`. This does not publish replies. The existing spam label on the introduction is not changed by this feature, and profile changes do not guarantee moderation approval.

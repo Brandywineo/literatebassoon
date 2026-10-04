@@ -21,6 +21,7 @@ test('HTTP registration, discovery, job delivery and private results',async()=>{
   assert.equal((await call('/api/admin/overview','GET',undefined,a.data.api_key)).status,401);
   const overview=await call('/api/admin/overview','GET',undefined,admin);assert.equal(overview.status,200);assert.equal(overview.data.referrals[0].referral,'kestrelfield');assert.equal(overview.data.referrals[0].registrations,1);assert.equal(overview.data.referrals[0].completed_jobs,0);assert.equal(overview.data.publications.length,0);assert.equal(overview.data.operator.enabled,0);assert.ok(!JSON.stringify(overview.data).includes('token_hash'));
   assert.equal((await call('/api/admin/drafts','POST',{service_id:'text-stats'},a.data.api_key)).status,401);
+  assert.equal((await call('/api/admin/social/discover','POST',{},a.data.api_key)).status,401);assert.equal((await call('/api/admin/social/profile','POST',{},a.data.api_key)).status,401);assert.ok(Array.isArray(overview.data.social.discussions));assert.ok(!JSON.stringify(overview.data.social).includes('verification_code'));
   const draft=await call('/api/admin/drafts','POST',{service_id:'text-stats'},admin);assert.equal(draft.status,201);assert.match(draft.data.body,/test credits/);
   assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'SENT'},admin)).status,400);
   assert.equal((await call('/api/admin/drafts/'+draft.data.id,'POST',{status:'APPROVED'},admin)).status,200);

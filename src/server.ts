@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
+import {discoverDiscussions,draftReply,reviewReply,publishReply,verifyReply,updateSocialProfile,profileDescription} from './social.ts';
 import { publishDraft, verifyPublication, createIntroduction } from './publishing.ts';
 import { createOutreachDraft } from './operator.ts';
 import { openStore, hash } from './store.ts';
@@ -44,6 +45,7 @@ const server=createServer(async(req,res)=>{
         moltbook:store.db.prepare('SELECT name,status,checked_at,claim_url,error_code FROM moltbook_state WHERE id=1').get(),
         monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
         activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
+        social:{profile_description:profileDescription,scan:store.db.prepare('SELECT checked_at,error_code FROM social_scan WHERE id=1').get(),discussions:store.db.prepare('SELECT * FROM social_discussions ORDER BY seen_at DESC LIMIT 30').all(),replies:store.db.prepare('SELECT id,post_id,body,status,created_at,attempted_at,comment_id,challenge,expires_at,error_code FROM social_replies ORDER BY rowid DESC LIMIT 30').all()},
         referrals:store.db.prepare(`SELECT a.referral,count(DISTINCT a.id) AS registrations,count(DISTINCT CASE WHEN j.status='COMPLETED' THEN j.id END) AS completed_jobs FROM agents a LEFT JOIN jobs j ON j.buyer_id=a.id WHERE a.referral IS NOT NULL GROUP BY a.referral`).all(),
         publications:store.db.prepare('SELECT draft_id,title,submolt,status,attempted_at,post_id,challenge,expires_at,error_code FROM moltbook_publications ORDER BY attempted_at DESC LIMIT 30').all(),
         drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
@@ -53,6 +55,11 @@ const server=createServer(async(req,res)=>{
       });
       if(method==='POST'&&path==='/api/admin/operator') {const b=await body(req);if(typeof b.enabled!=='boolean'||!['ollama','openai'].includes(b.provider))throw new Error('Invalid operator settings');const model=str(b.model,0,100,'Model');if(b.enabled&&!model.trim())throw new Error('Configure a model before enabling');if(b.enabled&&b.provider==='openai'&&!process.env.OPENAI_API_KEY)throw new Error('Set OPENAI_API_KEY in the private environment file first');const daily=integer(b.daily_limit);if(daily<1||daily>500)throw new Error('Daily request limit must be 1–500');store.setOperator(b.enabled,b.provider,model,daily);return send(res,200,{ok:true});}
       if(method==='POST'&&path==='/api/admin/drafts'){const b=await body(req);return send(res,201,createOutreachDraft(store,str(b.service_id,1,80,'Service ID')));}
+      if(method==='POST'&&path==='/api/admin/social/discover')return send(res,200,await discoverDiscussions(store));
+      if(method==='POST'&&path==='/api/admin/social/profile')return send(res,200,await updateSocialProfile(store));
+      if(method==='POST'&&path==='/api/admin/social/drafts'){const b=await body(req);return send(res,201,draftReply(store,str(b.post_id,1,100,'Post ID')));}
+      const replyMatch=path.match(/^\/api\/admin\/social\/replies\/([^/]+)(?:\/(publish|verify))?$/);
+      if(method==='POST'&&replyMatch){const b=await body(req);return send(res,200,replyMatch[2]==='publish'?await publishReply(store,replyMatch[1]):replyMatch[2]==='verify'?await verifyReply(store,replyMatch[1],str(b.answer,4,40,'Answer')):reviewReply(store,replyMatch[1],str(b.body,20,2000,'Reply'),str(b.status,1,20,'Status')));}
       if(method==='POST'&&path==='/api/admin/introduction')return send(res,201,createIntroduction(store));
       const publicationMatch=path.match(/^\/api\/admin\/drafts\/([^/]+)\/(publish|verify)$/);
       if(method==='POST'&&publicationMatch){const b=await body(req);return send(res,200,publicationMatch[2]==='publish'?await publishDraft(store,publicationMatch[1],str(b.title,3,200,'Title'),str(b.submolt||'general',1,40,'Submolt')):await verifyPublication(store,publicationMatch[1],str(b.answer,4,40,'Answer')));}
