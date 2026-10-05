@@ -24,7 +24,7 @@ export async function discoverDiscussions(store:Store,path=credentialPath(),fetc
   const candidates:any[]=[];for(let row=0;row<30;row++)for(const bucket of buckets)if(bucket[row])candidates.push(bucket[row]);
   const authors=new Map<string,number>(),seen=new Set<string>(),selected:any[]=[];
   for(const {p,source} of candidates){snapshot.considered++;
-   if(!p||(p.type&&p.type!=='post')||!identifier(p.id)||typeof p.author?.name!=='string'){reject('malformed_candidate',p,source);continue;}
+   if(!p||(p.type&&p.type!=='post'&&p.type!=='text')||!identifier(p.id)||typeof p.author?.name!=='string'){reject('malformed_candidate',p,source);continue;}
    if(seen.has(p.id)){reject('duplicate_candidate',p,source);continue;}seen.add(p.id);
    if(p.author.name.toLowerCase()===c.name.toLowerCase()){reject('own_post',p,source);continue;}
    if(store.db.prepare('SELECT id FROM social_replies WHERE post_id=? AND parent_id IS NULL').get(p.id)||store.db.prepare('SELECT id FROM social_generation WHERE post_id=? AND parent_id IS NULL').get(p.id)){reject('already_handled',p,source);continue;}
