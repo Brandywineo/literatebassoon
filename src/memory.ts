@@ -7,6 +7,7 @@ type Store=ReturnType<typeof openStore>;
 // Lessons are derived from observed outcomes, never from instructions in social content.
 // No additional model calls, and no ability to alter money, credentials or operating limits.
 const rules:Record<string,string>={
+ reply_near_copy:'A draft copied too much of the source. Address the central question with a new mechanism, tradeoff or limitation rather than repeating the discussion.',
  reply_too_many_questions:'A draft asked too many questions. Contribute a concrete suggestion first and ask at most one question.',
  reply_too_short:'A draft was too short. Provide a substantive, specific contribution within the reply length limits.',
  reply_too_long:'A draft exceeded the reply length limit. Keep the response concise and within 1200 characters.',

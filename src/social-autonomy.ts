@@ -35,6 +35,11 @@ export function validateAutonomousReply(body:unknown,source:string){
  const words=(s:string)=>new Set(s.toLowerCase().match(/[a-z]{5,}/g)||[]);
  const sourceWords=words(source),shared=[...words(body)].filter(w=>sourceWords.has(w));
  if(shared.length<3)throw Error('reply_not_grounded');
+ // Catch near-verbatim reuse; semantic usefulness remains a fallible model judgment.
+ const tokens=(s:string)=>s.toLowerCase().match(/[a-z0-9]+/g)||[];
+ const grams=(t:string[])=>t.slice(0,-4).map((_,i)=>t.slice(i,i+5).join(' '));
+ const sourceGrams=new Set(grams(tokens(source))),replyGrams=grams(tokens(body));
+ if(replyGrams.length>=12&&replyGrams.filter(g=>sourceGrams.has(g)).length/replyGrams.length>0.75)throw Error('reply_near_copy');
  return body.trim();
 }
 // Reserve before every model call; a crashed attempt still consumes today's budget.
@@ -90,7 +95,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(result.status==='PENDING_VERIFICATION'){await processChallenges(store,path,fetcher,Date.now(),generateText);result={...result,status:String(store.db.prepare('SELECT status FROM social_replies WHERE id=?').get(id)?.status)};}
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
-  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate'].includes(e.message)?e.message:'social_cycle_failed';
+  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy'].includes(e.message)?e.message:'social_cycle_failed';
   store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=? WHERE id=?").run(code,id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
  }
 }

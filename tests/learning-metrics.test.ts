@@ -29,3 +29,9 @@ test('retrieval records only guidance that fits and keeps relationship text with
  const full=retrieveMemory(x.store,'future','Agent queues retries',3,'Alice');assert.match(full,/Previous interactions/);assert.ok(full.length<=3200);assert.equal(learningMetrics(x.store).length,1);
  const none=retrieveMemory(x.store,'no-room','x'.repeat(12000),4,'Alice');assert.equal(none,'');assert.equal(learningMetrics(x.store)[0].uses,1);
 }finally{x.close();}});
+
+test('reply quality rejects near copies while allowing a grounded new mechanism',async()=>{const {validateAutonomousReply}=await import('../src/social-autonomy.ts');
+ const source='An agent queue cannot prove delivery merely by recording a successful acknowledgment. Independent verification requires checking the resource in its authoritative store rather than trusting the same channel that dispatched the write.';
+ assert.throws(()=>validateAutonomousReply(source,source),/reply_near_copy/);
+ assert.doesNotThrow(()=>validateAutonomousReply('Have an independent worker query the authoritative resource using a version token after dispatch. The queue acknowledgment should only mark receipt. This adds a read and latency; if that observer shares the failed datastore, verification still remains uncertain.',source));
+});

@@ -1,18 +1,26 @@
 import type {openStore} from './store.ts';
 type Store=ReturnType<typeof openStore>;
-const serviceTopics=/summari[sz]|rewrit|proofread|text cleanup|writing|edit(?:ing)? text|structured text|json valid/i;
+// A service topic is not buying intent. Require an explicit request in the same sentence.
+const serviceTopics=/\b(?:summari[sz]\w*|summar(?:y|ies)|rewrit\w*|proofread\w*|text cleanup|writing|edit(?:ing)? text|structured text|json valid\w*)\b/i;
+export function classifyDiscussion(text:string){
+ const clean=text.slice(0,14000).replace(/```[\s\S]*?```/g,' ').split('\n').filter(line=>!/^\s*>/.test(line)).join('\n').replace(/https?:\/\/\S+/g,' ');
+ const sentences=clean.split(/[.!?\n]+/).map(s=>s.trim()).filter(Boolean);
+ const request=sentences.find(s=>serviceTopics.test(s)&&! /\b(?:do not|don't|no longer|not looking|without|hypothetical|imagine|for example|suppose|we offer|i offer|try our|use my)\b/i.test(s)&&
+ /\b(?:(?:i|we|my agent|our agents?|agents?)\s+(?:really\s+)?(?:need|want|require|am looking for|are looking for|is looking for)|looking for|can (?:someone|anyone|an agent)|could (?:someone|anyone|an agent)|seeking (?:an? |help|a service)|please (?:summari[sz]e|rewrite|proofread)|recommend (?:an? )?(?:service|tool|agent))\b/i.test(s));
+ return {demand:Boolean(request),service_topic:serviceTopics.test(clean),request_excerpt:request?.slice(0,240)||null};
+}
 const reliabilityTopics=/agent|queue|retr(?:y|ies)|idempoten|delegat|workflow|api|memory|context|tool|task/i;
 export function chooseDiscussion(store:Store,now=Date.now()){
  const candidates=store.db.prepare(`SELECT d.* FROM social_discussions d WHERE full_content=1 AND seen_at>=? AND source_created_at IS NOT NULL AND julianday(source_created_at)>=julianday(?) AND julianday(source_created_at)<=julianday(?) AND NOT EXISTS(SELECT 1 FROM social_replies r WHERE r.post_id=d.id AND r.parent_id IS NULL) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.post_id=d.id AND g.parent_id IS NULL) ORDER BY source_created_at DESC LIMIT 30`).all(now-3600000,new Date(now-7*86400000).toISOString(),new Date(now+300000).toISOString());
  const ranked=candidates.map(p=>{
-  const text=String(p.title)+' '+String(p.body),demand=serviceTopics.test(text),relevant=reliabilityTopics.test(text);
+  const text=String(p.title)+' '+String(p.body),classification=classifyDiscussion(text),demand=classification.demand,relevant=reliabilityTopics.test(text)||classification.service_topic;
   const goal=demand?'service_demand':'useful_engagement';
   const history=store.db.prepare("SELECT count(*) AS attempts,sum(CASE WHEN g.status='FAILED' THEN 1 ELSE 0 END) AS failures FROM kestrel_plans plan JOIN social_generation g ON g.id=plan.id WHERE plan.goal_id=? AND plan.created_at>=?").get(goal,now-7*86400000)!;
   const failures=Number(history.failures||0),attempts=Number(history.attempts||0);
   const author=Number(store.db.prepare('SELECT count(*) AS n FROM social_replies r JOIN social_discussions d ON d.id=r.post_id WHERE d.author=? AND r.attempted_at>=?').get(p.author,now-7*86400000)?.n);
   const age=Math.max(0,(now-Date.parse(String(p.source_created_at)))/3600000);
   const score=(demand?50:relevant?30:0)+Math.max(0,24-age)-Math.min(author*8,24)-(attempts>=3?Math.round(failures/attempts*12):0);
-  return {p,goal,score,reason:demand?'discussion_matches_text_services':relevant?'relevant_agent_workflow_discussion':'weak_topic_match'};
+  return {p,goal,score,reason:demand?'explicit_text_service_request':relevant?'relevant_agent_workflow_discussion':'weak_topic_match'};
  }).filter(p=>p.reason!=='weak_topic_match').sort((a,b)=>b.score-a.score||String(a.p.id).localeCompare(String(b.p.id)));
  return ranked[0]||null;
 }
