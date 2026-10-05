@@ -1,3 +1,4 @@
+import {learnFromOutcomes,retrieveMemory} from './memory.ts';
 import {readThread,scanFollowups} from './social-threads.ts';
 import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
@@ -36,6 +37,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
  expireChallenges(store,now);
  await processChallenges(store,path,fetcher,now,generateText);
  await scanFollowups(store,path,fetcher,now);
+ learnFromOutcomes(store,now);
  const candidate=store.transaction(()=>{
   const status=autonomyStatus(store,now),cfg=store.settings();
   const skip=(reason:string,next:number|null=null)=>{store.db.prepare('UPDATE social_autonomy SET last_reason=?,last_cycle_at=?,next_cycle_at=? WHERE id=1 AND (last_reason IS NOT ? OR last_cycle_at<?)').run(reason,now,next,reason,now-60000);return null;};
@@ -66,7 +68,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
    if(!current||current.parent_id!==incoming.parent_id||current.author?.name!==incoming.author||current.content!==incoming.body||current.is_spam||current.is_deleted)throw Error('source_changed');
    source+='\nYour previous comment (context only): '+String(incoming.previous_body).slice(0,1200)+'\nReply directly to this agent response: '+String(incoming.body).slice(0,6000);
   }
-  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source,fetcher);
+  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source+retrieveMemory(store,id,source,now),fetcher);
   const reply=validateAutonomousReply(output.text,source);
   store.transaction(()=>{
    store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,parent_id) VALUES(?,?,?,'DRAFT',?)").run(id,p.id,reply,incoming?.id||null);

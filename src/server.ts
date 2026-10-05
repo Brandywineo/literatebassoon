@@ -1,3 +1,4 @@
+import {memorySnapshot} from './memory.ts';
 import {autonomyStatus,setAutonomy} from './social-autonomy.ts';
 import {openPayments,asset,balance} from './payments.ts';
 import { createServer } from 'node:http';
@@ -15,7 +16,7 @@ const payments=openPayments(store);
 const adminKey=process.env.ADMIN_KEY || '';
 if(adminKey && adminKey.length<32) throw new Error('ADMIN_KEY must be at least 32 characters');
 const operator=process.env.OPERATOR_NAME || 'Kestrel';
-const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity']);
+const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity','/admin/memory']);
 const assets=new Map(['/','/app.js','/style.css','/skill.md','/admin.js','/admin-pages.js',...adminPages].map(path=>[path,readFileSync(fileURLToPath(new URL(`../public/${path==='/'?'index.html':adminPages.has(path)?'admin.html':path.slice(1)}`,import.meta.url)))]));
 const limits=new Map<string,{count:number;until:number}>();
 function limit(ip:string, scope:string, max:number) { const key=scope+ip, now=Date.now(); let entry=limits.get(key); if(!entry||entry.until<now) {entry={count:0,until:now+60000};limits.set(key,entry);} if(++entry.count>max) throw Object.assign(new Error('Too many requests; retry in a minute'),{status:429}); }
@@ -51,7 +52,7 @@ const server=createServer(async(req,res)=>{
         moltbook:store.db.prepare('SELECT name,status,checked_at,claim_url,error_code FROM moltbook_state WHERE id=1').get(),
         monitor:store.db.prepare('SELECT checked_at,snapshot FROM operator_monitor WHERE id=1').get(),
         activity:store.db.prepare('SELECT kind,message,created_at FROM operator_events ORDER BY id DESC LIMIT 30').all(),
-        social:{verification_attempts:store.db.prepare('SELECT target,started_at,status,error_code,equation,answer,finished_at,http_status,response_reason FROM social_verification_attempts ORDER BY started_at DESC LIMIT 30').all(),autonomy:autonomyStatus(store),profile_description:profileDescription,scan:store.db.prepare('SELECT checked_at,completed_at,error_code,snapshot FROM social_scan WHERE id=1').get(),discussions:store.db.prepare('SELECT * FROM social_discussions WHERE full_content=1 ORDER BY seen_at DESC LIMIT 30').all(),replies:store.db.prepare('SELECT r.id,r.post_id,r.parent_id,r.body,r.status,r.created_at,r.attempted_at,r.comment_id,r.challenge,r.expires_at,r.error_code,v.visibility,v.checked_at AS visibility_checked_at,v.last_visible_at,v.verification_status AS observed_verification_status,v.error_code AS visibility_error_code FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id ORDER BY r.rowid DESC LIMIT 30').all()},
+        social:{memory:memorySnapshot(store),verification_attempts:store.db.prepare('SELECT target,started_at,status,error_code,equation,answer,finished_at,http_status,response_reason FROM social_verification_attempts ORDER BY started_at DESC LIMIT 30').all(),autonomy:autonomyStatus(store),profile_description:profileDescription,scan:store.db.prepare('SELECT checked_at,completed_at,error_code,snapshot FROM social_scan WHERE id=1').get(),discussions:store.db.prepare('SELECT * FROM social_discussions WHERE full_content=1 ORDER BY seen_at DESC LIMIT 30').all(),replies:store.db.prepare('SELECT r.id,r.post_id,r.parent_id,r.body,r.status,r.created_at,r.attempted_at,r.comment_id,r.challenge,r.expires_at,r.error_code,v.visibility,v.checked_at AS visibility_checked_at,v.last_visible_at,v.verification_status AS observed_verification_status,v.error_code AS visibility_error_code FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id ORDER BY r.rowid DESC LIMIT 30').all()},
         referrals:store.db.prepare(`SELECT a.referral,count(DISTINCT a.id) AS registrations,count(DISTINCT CASE WHEN j.status='COMPLETED' THEN j.id END) AS completed_jobs FROM agents a LEFT JOIN jobs j ON j.buyer_id=a.id WHERE a.referral IS NOT NULL GROUP BY a.referral`).all(),
         publications:store.db.prepare('SELECT draft_id,title,submolt,status,attempted_at,post_id,challenge,expires_at,error_code FROM moltbook_publications ORDER BY attempted_at DESC LIMIT 30').all(),
         drafts:store.db.prepare('SELECT id,body,status,created_at FROM outreach_drafts ORDER BY rowid DESC LIMIT 30').all(),
