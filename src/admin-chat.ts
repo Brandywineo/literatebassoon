@@ -1,3 +1,4 @@
+import {coreSnapshot} from './agent-core.ts';
 import {planningSnapshot} from './planning.ts';
 import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
@@ -36,7 +37,7 @@ export async function runAdminChat(store:Store,generateText=generate,now=Date.no
  });if(!claim)return false;
  try{
   const {row,cfg}=claim;
-  const state={status_facts:chatStatusFacts(store,now),goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
+  const state={agent_core:{projects:coreSnapshot(store,now).projects,waiting_reason:coreSnapshot(store,now).waiting_reason,tasks:coreSnapshot(store,now).tasks.slice(0,2).map(t=>({project:t.project_id,status:t.status,error:t.error_code,plan:t.plan?String(t.plan).slice(0,900):null}))},status_facts:chatStatusFacts(store,now),goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
   const history=store.db.prepare("SELECT body,response FROM kestrel_chat WHERE status='ANSWERED' AND created_at<=? AND id<>? ORDER BY rowid DESC LIMIT 6").all(row.created_at,row.id).reverse().map(r=>({Admin:String(r.body).slice(0,500),Kestrel:String(r.response).slice(0,600)}));
   const memory=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 3").all();
   const context={live_state:state,fallible_memory:memory,history,message:{sender:'Admin',body:row.body}};

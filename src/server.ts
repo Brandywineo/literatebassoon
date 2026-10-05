@@ -1,3 +1,4 @@
+import {coreSnapshot} from './agent-core.ts';
 import {planningSnapshot} from './planning.ts';
 import {chatHistory,queueChat} from './admin-chat.ts';
 import {memorySnapshot} from './memory.ts';
@@ -18,7 +19,7 @@ const payments=openPayments(store);
 const adminKey=process.env.ADMIN_KEY || '';
 if(adminKey && adminKey.length<32) throw new Error('ADMIN_KEY must be at least 32 characters');
 const operator=process.env.OPERATOR_NAME || 'Kestrel';
-const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity','/admin/memory','/admin/chat','/admin/planning','/admin/learning','/admin/relationships']);
+const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity','/admin/memory','/admin/chat','/admin/planning','/admin/learning','/admin/relationships','/admin/projects']);
 const assets=new Map(['/','/app.js','/style.css','/skill.md','/admin.js','/admin-pages.js',...adminPages].map(path=>[path,readFileSync(fileURLToPath(new URL(`../public/${path==='/'?'index.html':adminPages.has(path)?'admin.html':path.slice(1)}`,import.meta.url)))]));
 const limits=new Map<string,{count:number;until:number}>();
 function limit(ip:string, scope:string, max:number) { const key=scope+ip, now=Date.now(); let entry=limits.get(key); if(!entry||entry.until<now) {entry={count:0,until:now+60000};limits.set(key,entry);} if(++entry.count>max) throw Object.assign(new Error('Too many requests; retry in a minute'),{status:429}); }
@@ -48,7 +49,7 @@ const server=createServer(async(req,res)=>{
       if(method==='GET'&&path==='/api/admin/chat')return send(res,200,{messages:chatHistory(store)});
       if(method==='POST'&&path==='/api/admin/chat'){const b=await body(req);return send(res,202,queueChat(store,b.message,b.request_key));}
       if(method==='GET'&&path==='/api/admin/overview') return send(res,200,{
-        planning:planningSnapshot(store),
+        core:coreSnapshot(store),planning:planningSnapshot(store),
         chat:chatHistory(store),
         payments:payments.overview(),
         operator:{...store.settings(),...store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),name:operator,openai_configured:Boolean(process.env.OPENAI_API_KEY)},

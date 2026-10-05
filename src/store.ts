@@ -27,6 +27,9 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS kestrel_insights(topic TEXT PRIMARY KEY,lesson TEXT NOT NULL,evidence TEXT NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_insight_history(reflection_id TEXT NOT NULL,topic TEXT NOT NULL,lesson TEXT NOT NULL,evidence TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(reflection_id,topic));
     CREATE TABLE IF NOT EXISTS kestrel_memory_state(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS kestrel_projects(id TEXT PRIMARY KEY,objective TEXT NOT NULL,next_step TEXT,updated_at INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS kestrel_tasks(id TEXT PRIMARY KEY,project_id TEXT REFERENCES kestrel_projects(id),status TEXT NOT NULL,started_at INTEGER NOT NULL,finished_at INTEGER,plan TEXT,evidence TEXT,evidence_hash TEXT,error_code TEXT);
+    INSERT OR IGNORE INTO kestrel_projects(id,objective) VALUES('exchange_health','Maintain a reliable exchange and investigate unhealthy operation'),('customer_delivery','Understand failed customer jobs and identify delivery improvements'),('agent_onboarding','Understand registration-to-first-job conversion and propose onboarding improvements');`);
   db.exec('BEGIN IMMEDIATE');
   column('kestrel_reflections','evidence_hash','TEXT');
   column('kestrel_reflections','finished_at','INTEGER');

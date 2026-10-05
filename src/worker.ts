@@ -1,3 +1,4 @@
+import {runAgentCore} from './agent-core.ts';
 import {runAdminChat} from './admin-chat.ts';
 import {reflectOnMemory} from './memory.ts';
 import {runSocialCycle} from './social-autonomy.ts';
@@ -35,7 +36,7 @@ async function main(){
   try {while(!stopped){
     heartbeat(store.settings().enabled?'online':'paused');
     // Social I/O runs separately so long model calls cannot hold the customer queue.
-    if(!socialFlight)socialFlight=(async()=>{try{await runAdminChat(store);await syncMoltbook(store);await discoverDiscussions(store);await runSocialCycle(store);await reflectOnMemory(store,generate);}catch{console.error('Kestrel social cycle failed; job processing continues');}})().finally(()=>{socialFlight=undefined;});
+    if(!socialFlight)socialFlight=(async()=>{try{await runAdminChat(store);await runAgentCore(store);await reflectOnMemory(store,generate);await syncMoltbook(store);await discoverDiscussions(store);await runSocialCycle(store);}catch{console.error('Kestrel social cycle failed; job processing continues');}})().finally(()=>{socialFlight=undefined;});
     await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));
   }await socialFlight; }
   finally{clearInterval(timer);clearInterval(monitorTimer);heartbeat('offline');store.db.close();}

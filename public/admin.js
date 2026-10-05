@@ -12,6 +12,10 @@ async function load(){const activeKey=key,data=await api('overview');if(key!==ac
  const mb=data.moltbook;$('#moltbook-status').textContent=mb?mb.name+' · '+mb.status+' · checked '+Math.round((Date.now()-mb.checked_at)/1000)+'s ago'+(mb.error_code?' · '+mb.error_code:''):'Not registered on this server.';const claim=$('#moltbook-claim');claim.hidden=true;claim.removeAttribute('href');if(mb?.status==='pending_claim'&&mb.claim_url){try{const u=new URL(mb.claim_url);if(u.origin==='https://www.moltbook.com'&&u.pathname.startsWith('/claim/')){claim.href=u.href;claim.hidden=false;}}catch{}}
  renderMoney(data.payments,data.services);
  renderSocial(data.social);
+ const core=data.core||{};$('#core-status').textContent=(core.waiting_reason||'waiting')+(core.next_eligible_at?' · next eligible '+adminTime(core.next_eligible_at):'');
+ table('#core-projects',['Project','Objective','Proposed next step'],(core.projects||[]).map(p=>[p.id,p.objective,p.next_step||'No investigation yet']));
+ table('#core-tools',['Tool','Effect','Purpose'],(core.tools||[]).map(t=>[t.id,t.effect,t.description]));
+ table('#core-tasks',['Started (EAT)','Status','Project','Plan / proposal','Observed evidence','Failure'],(core.tasks||[]).map(t=>[adminTime(t.started_at),t.status,t.project_id,t.plan,t.evidence,t.error_code]));
  renderChat(data.chat||[]);
  const planning=data.planning||{};$('#planning-waiting').textContent='Current cycle: '+(planning.waiting?.last_reason||'waiting').replaceAll('_',' ');
  table('#planning-goals',['Objective','Observed metrics','Checked'],(planning.goals||[]).map(g=>[g.objective,g.metrics,g.checked_at?adminTime(g.checked_at):'Waiting']));

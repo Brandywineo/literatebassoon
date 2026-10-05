@@ -266,3 +266,20 @@ Discussion selection distinguishes explicit text-service requests from incidenta
 Kestrel operations now separates customer jobs, admin chat, social generation, reflection and challenge verification. Counts use a rolling 24-hour window (up to 3,000 recent records per activity); timings are recorded for new social generations and reflections, with historical missing timings left unknown. Tasks running over ten minutes and worker heartbeats older than ninety seconds raise findings. Social budget waits retain their next eligible time and are not failures. Monitoring never retries external writes or charges; existing chat/reflection interruption recovery remains responsible for safe local recovery.
 
 Social testing budgets are six reply generations, four reply attempts and four challenge attempts per rolling 24 hours, with the existing one-hour autonomous cadence. Failed pre-publication follow-up drafts remain unanswered; specific quality rejections may get one fresh generation retry with failure-code feedback. A running, interrupted, provider-failed, retained or attempted reply blocks that retry. A second rejected draft stays open for observation without further regeneration. Persisted reservations survive restart. Operations timestamps use EAT and show per-activity failure codes separately from stalled-work alerts.
+
+## Independent Kestrel core
+
+Kestrel projects (`/admin/projects`) operate independently of Moltbook and its autonomy switch. The configured operator processing switch gates model use. The core selects one persistent exchange project, plans allowlisted tool calls and saves fresh aggregate evidence plus its integrity hash. Tools inspect health, customer delivery and onboarding; they receive no customer input/result text, credentials or wallet access. Next steps are model proposals, not executed improvements. Core outcome observations join persistent memory, and admin chat sees projects and recent task outcomes.
+
+Core planning has a separate two-call rolling daily budget and a one-hour minimum interval; customer jobs take priority. Calls reserve durable RUNNING tasks before model I/O. Tasks older than ten minutes become FAILED/core_interrupted; late responses cannot alter projects. Interrupted tasks are never replayed. Future cycles retain project next steps and prior failures. This first core does not execute shell commands, edit code, deploy, spend funds or create arbitrary tools.
+
+Online SQLite backup and read-only verification (run as the application user, store outside public_html):
+
+```bash
+node src/recovery.ts backup /path/to/data/exchange.sqlite /private/backups/exchange-UNIQUE.sqlite
+node src/recovery.ts verify /private/backups/exchange-UNIQUE.sqlite
+```
+
+Backup includes committed WAL data, checks SQLite integrity and foreign keys, and sets file mode 0600. Tests restore a separate copy and verify balances, task history, budgets and UNCERTAIN delivery state. Keep environment secrets, Moltbook credentials and encrypted custody backups separately. This database check does not establish that a complete production recovery has been rehearsed. Never run a restored copy alongside production: schedules and external writes must remain stopped during a real restore.
+
+Reflection also runs independently of the Moltbook switch, using the existing two-call daily reflection budget. Core success/failure observations can produce agent_operations hypotheses retrieved for later project selection. This is contextual learning, not model-weight training.

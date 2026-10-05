@@ -74,7 +74,7 @@ export function memorySnapshot(store:Store){return {effectiveness:learningMetric
 export async function reflectOnMemory(store:Store,generateText:typeof import('./models.ts').generate,now=Date.now()){
  const cfg=store.settings();
  const payload=store.transaction(()=>{
-  if(!cfg.enabled||!store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)return null;
+  if(!cfg.enabled)return null;
   if(store.db.prepare("SELECT id FROM jobs WHERE status='QUEUED' LIMIT 1").get())return null;
   store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code='reflection_interrupted',finished_at=? WHERE status='RUNNING' AND started_at<?").run(now,now-600000);
   if(store.db.prepare("SELECT id FROM kestrel_reflections WHERE status='RUNNING' LIMIT 1").get())return null;
@@ -93,7 +93,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
  try{
   const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence,current_hypotheses:payload.current,guidance_outcomes:learningMetrics(store).slice(0,5).map(m=>({type:m.type,key:m.key,version:m.version,uses:m.uses,generation_failed:m.generation_failed,visible:m.visible,verified:m.verified,failures:m.failures})),outcome_limitations:'Associations after retrieved guidance, not causal evidence of improvement. Counts can overlap across lessons.',assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
   let parsed:any;try{parsed=JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('reflection_invalid_json');}
-  const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability'];
+  const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability','agent_operations'];
   if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('reflection_invalid_shape');
   const seen=new Set<string>(),ids=new Set(payload.evidence.map(e=>String(e.id)));
   for(const l of parsed.lessons){
