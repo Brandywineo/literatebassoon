@@ -12,7 +12,8 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY, provider_id TEXT REFERENCES agents(id), name TEXT NOT NULL, description TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL CHECK(price>=0), builtin TEXT, active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL REFERENCES agents(id), service_id TEXT NOT NULL REFERENCES services(id), status TEXT NOT NULL, input TEXT NOT NULL, result TEXT, price INTEGER NOT NULL, fee INTEGER NOT NULL, idempotency_key TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, UNIQUE(buyer_id,idempotency_key));
     CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY, agent_id TEXT REFERENCES agents(id), job_id TEXT REFERENCES jobs(id), amount INTEGER NOT NULL, kind TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
-  db.exec(`CREATE TABLE IF NOT EXISTS kestrel_experience(id TEXT PRIMARY KEY,source TEXT NOT NULL,kind TEXT NOT NULL,observation TEXT NOT NULL,observed_at INTEGER NOT NULL);
+  db.exec(`CREATE TABLE IF NOT EXISTS kestrel_chat(id TEXT PRIMARY KEY,request_key TEXT UNIQUE NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,response TEXT,error_code TEXT,created_at INTEGER NOT NULL,started_at INTEGER,finished_at INTEGER);
+    CREATE TABLE IF NOT EXISTS kestrel_experience(id TEXT PRIMARY KEY,source TEXT NOT NULL,kind TEXT NOT NULL,observation TEXT NOT NULL,observed_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_lessons(kind TEXT PRIMARY KEY,lesson TEXT NOT NULL,evidence_count INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_memory_decisions(reply_id TEXT PRIMARY KEY,selected TEXT NOT NULL,created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_reflections(id TEXT PRIMARY KEY,started_at INTEGER NOT NULL,status TEXT NOT NULL,evidence_count INTEGER NOT NULL,error_code TEXT);
