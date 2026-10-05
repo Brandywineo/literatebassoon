@@ -14,6 +14,15 @@ export function queueChat(store:Store,body:unknown,key:unknown,now=Date.now()){
   const id=crypto.randomUUID();store.db.prepare("INSERT INTO kestrel_chat(id,request_key,body,status,created_at) VALUES(?,?,?,'QUEUED',?)").run(id,key,body.trim(),now);return {id,status:'QUEUED'};
  });
 }
+export function chatStatusFacts(store:Store,now=Date.now()){
+ const status=autonomyStatus(store,now),next=status.next_eligible_at;
+ const lifetime=store.db.prepare("SELECT count(*) AS attempted,sum(CASE WHEN v.visibility='VISIBLE' THEN 1 ELSE 0 END) AS visible,sum(CASE WHEN r.status='PUBLISHED' OR v.verification_status='verified' THEN 1 ELSE 0 END) AS verified FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id WHERE r.attempted_at IS NOT NULL").get()!;
+ return {observed_at:new Date(now).toISOString(),window:'rolling last 24 hours, not lifetime totals',waiting_reason:status.waiting_reason,
+ lifetime_replies:{attempted:Number(lifetime.attempted),last_observed_visible:Number(lifetime.visible||0),verified:Number(lifetime.verified||0)},generation_attempts:status.generation_attempts,reply_write_attempts:status.reply_attempts,visible_replies:status.visible_replies,verified_replies:status.verified_replies,
+ next_eligible_utc:next==null?null:new Date(next).toISOString(),next_eligible_eat:next==null?null:new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Nairobi',dateStyle:'medium',timeStyle:'medium'}).format(next)+' EAT',
+ seconds_until_eligible:next==null?null:Math.max(0,Math.ceil((next-now)/1000)),
+ interpretation:'Generation attempts and reply writes have separate limits. A 24-hour rolling window does not mean a fresh 24-hour wait. Eligibility is an estimate, not a promise of publication. Zero verified replies describes this window only. Visibility is separate from verification, accuracy and usefulness. A previous verification failure does not prove verification is currently blocked.'};
+}
 export async function runAdminChat(store:Store,generateText=generate,now=Date.now()){
  const claim=store.transaction(()=>{
   // A crashed request is visibly failed; it is never silently regenerated.
@@ -26,7 +35,7 @@ export async function runAdminChat(store:Store,generateText=generate,now=Date.no
  });if(!claim)return false;
  try{
   const {row,cfg}=claim;
-  const state={goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
+  const state={status_facts:chatStatusFacts(store,now),goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
   const history=store.db.prepare("SELECT body,response FROM kestrel_chat WHERE status='ANSWERED' AND created_at<=? AND id<>? ORDER BY rowid DESC LIMIT 6").all(row.created_at,row.id).reverse().map(r=>({Admin:String(r.body).slice(0,500),Kestrel:String(r.response).slice(0,600)}));
   const memory=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 3").all();
   const context={live_state:state,fallible_memory:memory,history,message:{sender:'Admin',body:row.body}};
