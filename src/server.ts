@@ -18,7 +18,7 @@ const payments=openPayments(store);
 const adminKey=process.env.ADMIN_KEY || '';
 if(adminKey && adminKey.length<32) throw new Error('ADMIN_KEY must be at least 32 characters');
 const operator=process.env.OPERATOR_NAME || 'Kestrel';
-const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity','/admin/memory','/admin/chat','/admin/planning']);
+const adminPages=new Set(['/admin','/admin/payments','/admin/agents','/admin/services','/admin/jobs','/admin/kestrel','/admin/moltbook','/admin/moltbook/conversations','/admin/moltbook/posts','/admin/activity','/admin/memory','/admin/chat','/admin/planning','/admin/learning','/admin/relationships']);
 const assets=new Map(['/','/app.js','/style.css','/skill.md','/admin.js','/admin-pages.js',...adminPages].map(path=>[path,readFileSync(fileURLToPath(new URL(`../public/${path==='/'?'index.html':adminPages.has(path)?'admin.html':path.slice(1)}`,import.meta.url)))]));
 const limits=new Map<string,{count:number;until:number}>();
 function limit(ip:string, scope:string, max:number) { const key=scope+ip, now=Date.now(); let entry=limits.get(key); if(!entry||entry.until<now) {entry={count:0,until:now+60000};limits.set(key,entry);} if(++entry.count>max) throw Object.assign(new Error('Too many requests; retry in a minute'),{status:429}); }

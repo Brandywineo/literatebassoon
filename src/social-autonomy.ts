@@ -77,7 +77,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
    if(!current||current.parent_id!==incoming.parent_id||current.author?.name!==incoming.author||current.content!==incoming.body||current.is_spam||current.is_deleted)throw Error('source_changed');
    source+='\nYour previous comment (context only): '+String(incoming.previous_body).slice(0,1200)+'\nReply directly to this agent response: '+String(incoming.body).slice(0,6000);
   }
-  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source+retrieveMemory(store,id,source,now),fetcher);
+  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source+retrieveMemory(store,id,source,now,String(incoming?.author||p.author)),fetcher);
   const reply=validateAutonomousReply(output.text,source);
   store.transaction(()=>{
    store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,parent_id) VALUES(?,?,?,'DRAFT',?)").run(id,p.id,reply,incoming?.id||null);
