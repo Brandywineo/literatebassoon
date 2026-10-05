@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {ModelError} from './models.ts';
 import type {openStore} from './store.ts';
 type Store=ReturnType<typeof openStore>;
 // Lessons are derived from observed outcomes, never from instructions in social content.
@@ -57,24 +59,29 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
  const payload=store.transaction(()=>{
   if(!cfg.enabled||!store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)return null;
   if(store.db.prepare("SELECT id FROM jobs WHERE status='QUEUED' LIMIT 1").get())return null;
+  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code='reflection_interrupted' WHERE status='RUNNING' AND started_at<?").run(now-600000);
+  if(store.db.prepare("SELECT id FROM kestrel_reflections WHERE status='RUNNING' LIMIT 1").get())return null;
   const budget=store.db.prepare('SELECT count(*) AS n,max(started_at) AS last FROM kestrel_reflections WHERE started_at>=?').get(now-86400000)!;
-  if(Number(budget.n)>=2||(budget.last!=null&&now-Number(budget.last)<43200000))return null;
+  if(Number(budget.n)>=2||(budget.last!=null&&now-Number(budget.last)<3600000))return null;
   const evidence=store.db.prepare('SELECT id,kind,observation,observed_at FROM kestrel_experience ORDER BY observed_at DESC,id DESC LIMIT 20').all();
   if(!evidence.length)return null;
-  const previous=store.db.prepare('SELECT evidence_count FROM kestrel_reflections ORDER BY started_at DESC LIMIT 1').get();
+  const hash=createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
+  const prior=store.db.prepare('SELECT status FROM kestrel_reflections WHERE evidence_hash=?').all(hash);
+  if(prior.some(r=>r.status==='COMPLETED')||prior.length>=2)return null;
   const count=Number(store.db.prepare('SELECT count(*) AS n FROM kestrel_experience').get()?.n);
-  if(previous&&Number(previous.evidence_count)===count)return null;
-  const id=crypto.randomUUID();store.db.prepare("INSERT INTO kestrel_reflections(id,started_at,status,evidence_count) VALUES(?,?,'RUNNING',?)").run(id,now,count);
+  const id=crypto.randomUUID();store.db.prepare("INSERT INTO kestrel_reflections(id,started_at,status,evidence_count,evidence_hash) VALUES(?,?,'RUNNING',?,?)").run(id,now,count,hash);
   return {id,evidence,current:store.db.prepare('SELECT topic,lesson,evidence FROM kestrel_insights').all()};
  });
  if(!payload)return {skipped:true};
  try{
   const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence,current_hypotheses:payload.current}));
-  const parsed=JSON.parse(result.text),topics=['reply_quality','source_freshness','delivery_verification','generation_reliability'];
-  if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('invalid_reflection');
+  let parsed:any;try{parsed=JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('reflection_invalid_json');}
+  const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability'];
+  if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('reflection_invalid_shape');
   const seen=new Set<string>(),ids=new Set(payload.evidence.map(e=>String(e.id)));
   for(const l of parsed.lessons){
-   if(!l||Object.keys(l).sort().join(',')!=='evidence,lesson,topic'||!topics.includes(l.topic)||seen.has(l.topic)||typeof l.lesson!=='string'||l.lesson.length<20||l.lesson.length>600||/https?:|www\.|credential|private.key|api.key|seed.phrase|disable|bypass|raise.*limit|ignore.*instruction|guaranteed/i.test(l.lesson)||!Array.isArray(l.evidence)||!l.evidence.length||l.evidence.length>5||!l.evidence.every((id:unknown)=>typeof id==='string'&&ids.has(id)))throw Error('invalid_reflection');
+   if(l&&Array.isArray(l.evidence)&&l.evidence.some((id:unknown)=>typeof id!=='string'||!ids.has(id)))throw Error('reflection_unknown_evidence');
+   if(!l||Object.keys(l).sort().join(',')!=='evidence,lesson,topic'||!topics.includes(l.topic)||seen.has(l.topic)||typeof l.lesson!=='string'||l.lesson.length<20||l.lesson.length>600||/https?:|www\.|credential|private.key|api.key|seed.phrase|disable|bypass|raise.*limit|ignore.*instruction|guaranteed/i.test(l.lesson)||!Array.isArray(l.evidence)||!l.evidence.length||l.evidence.length>5||!l.evidence.every((id:unknown)=>typeof id==='string'&&ids.has(id)))throw Error('reflection_invalid_lesson');
    seen.add(l.topic);
   }
   // No review gate. The agent applies valid hypotheses and preserves revision history.
@@ -86,5 +93,10 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
    }
    store.db.prepare("UPDATE kestrel_reflections SET status='COMPLETED' WHERE id=?").run(payload.id);
   });return {learned:parsed.lessons.length};
- }catch{store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code='reflection_rejected_or_failed' WHERE id=?").run(payload.id);return {error_code:'reflection_rejected_or_failed'};}
+ }catch(error){
+  const allowed=['reflection_invalid_json','reflection_invalid_shape','reflection_unknown_evidence','reflection_invalid_lesson'];
+  const provider=['empty_response','incomplete_response','response_too_large','insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','billing_hard_limit_reached'];
+  const code=error instanceof ModelError&&(provider.includes(error.message)||/^http_\d{3}$/.test(error.message))?'reflection_model_'+error.message:error instanceof Error&&allowed.includes(error.message)?error.message:error instanceof Error&&error.name==='TimeoutError'?'reflection_timeout':'reflection_model_or_storage_error';
+  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code=? WHERE id=?").run(code,payload.id);return {error_code:code};
+ }
 }

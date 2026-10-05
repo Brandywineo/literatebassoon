@@ -20,6 +20,7 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS kestrel_insight_history(reflection_id TEXT NOT NULL,topic TEXT NOT NULL,lesson TEXT NOT NULL,evidence TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(reflection_id,topic));
     CREATE TABLE IF NOT EXISTS kestrel_memory_state(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL);`);
   db.exec('BEGIN IMMEDIATE');
+  column('kestrel_reflections','evidence_hash','TEXT');
   function column(table:string,name:string,definition:string) {
     if(!db.prepare(`PRAGMA table_info(${table})`).all().some(c=>c.name===name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }
