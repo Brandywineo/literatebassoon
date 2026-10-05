@@ -17,3 +17,9 @@ test('chat status distinguishes rolling generation limits from writes and suppli
  assert.equal(facts.waiting_reason,'generation_daily_limit');assert.equal(facts.generation_attempts,3);assert.equal(facts.reply_write_attempts,0);
  assert.equal(facts.seconds_until_eligible,8*3600);assert.equal(facts.next_eligible_utc,new Date(first+86400000).toISOString());assert.match(facts.next_eligible_eat!,/EAT$/);assert.match(facts.window,/not lifetime/);
 }finally{x.close();}});
+
+test('lifetime chat verification includes older published records even without attempt timestamps',()=>{const x=setup();try{
+ x.store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('legacy','Title','Body','agent','general',1)").run();
+ x.store.db.prepare("INSERT INTO social_replies(id,post_id,body,status) VALUES('legacy-reply','legacy','Reply','PUBLISHED')").run();
+ const facts=chatStatusFacts(x.store,Date.now());assert.equal(facts.verified_replies,0);assert.equal(facts.lifetime_replies.verified,1);assert.match(facts.verified_count_summary,/all stored history: 1/);
+}finally{x.close();}});

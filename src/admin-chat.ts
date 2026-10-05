@@ -16,10 +16,11 @@ export function queueChat(store:Store,body:unknown,key:unknown,now=Date.now()){
 }
 export function chatStatusFacts(store:Store,now=Date.now()){
  const status=autonomyStatus(store,now),next=status.next_eligible_at;
- const lifetime=store.db.prepare("SELECT count(*) AS attempted,sum(CASE WHEN v.visibility='VISIBLE' THEN 1 ELSE 0 END) AS visible,sum(CASE WHEN r.status='PUBLISHED' OR v.verification_status='verified' THEN 1 ELSE 0 END) AS verified FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id WHERE r.attempted_at IS NOT NULL").get()!;
+ const lifetime=store.db.prepare("SELECT count(*) AS attempted,sum(CASE WHEN v.visibility='VISIBLE' THEN 1 ELSE 0 END) AS visible,sum(CASE WHEN r.status='PUBLISHED' OR v.verification_status='verified' THEN 1 ELSE 0 END) AS verified FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id WHERE r.attempted_at IS NOT NULL OR r.status='PUBLISHED' OR v.verification_status='verified'").get()!;
  return {observed_at:new Date(now).toISOString(),window:'rolling last 24 hours, not lifetime totals',waiting_reason:status.waiting_reason,
  lifetime_replies:{attempted:Number(lifetime.attempted),last_observed_visible:Number(lifetime.visible||0),verified:Number(lifetime.verified||0)},generation_attempts:status.generation_attempts,reply_write_attempts:status.reply_attempts,visible_replies:status.visible_replies,verified_replies:status.verified_replies,
  next_eligible_utc:next==null?null:new Date(next).toISOString(),next_eligible_eat:next==null?null:new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Nairobi',dateStyle:'medium',timeStyle:'medium'}).format(next)+' EAT',
+ verified_count_summary:`Verified replies in the rolling last 24 hours: ${status.verified_replies}. Verified replies across all stored history: ${Number(lifetime.verified||0)}. These are separate counts; never substitute the recent count for the lifetime count.`,
  seconds_until_eligible:next==null?null:Math.max(0,Math.ceil((next-now)/1000)),
  interpretation:'Generation attempts and reply writes have separate limits. A 24-hour rolling window does not mean a fresh 24-hour wait. Eligibility is an estimate, not a promise of publication. Zero verified replies describes this window only. Visibility is separate from verification, accuracy and usefulness. A previous verification failure does not prove verification is currently blocked.'};
 }
