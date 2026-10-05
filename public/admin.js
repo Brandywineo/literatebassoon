@@ -49,7 +49,7 @@ let autonomousEnabled=false;
 function renderSocial(social){
  const memory=social.memory||{};$('#memory-state').textContent=memory.state?'Last learning cycle: '+adminTime(memory.state.checked_at):'Waiting for first learning cycle';
  table('#memory-lessons',['Lesson','Observed evidence','Updated'],(memory.lessons||[]).map(l=>[l.lesson,l.evidence_count,adminTime(l.updated_at)]));
- table('#memory-insights',['Topic','Current hypothesis','Evidence'],(memory.insights||[]).map(i=>[i.topic,i.lesson,i.evidence]));
+ table('#memory-insights',['Topic','Current hypothesis','Evidence','Assessment'],(memory.insights||[]).map(i=>[i.topic,i.lesson,i.evidence,(i.assessment||'UNTESTED')+' · '+(i.assessment_reason||'not assessed')]));
  table('#memory-revisions',['Topic','Revision','Time'],(memory.revisions||[]).map(i=>[i.topic,i.lesson,adminTime(i.created_at)]));
  table('#memory-reflections',['Started','Status','Failure'],(memory.reflections||[]).map(i=>[adminTime(i.started_at),i.status,i.error_code]));
  table('#memory-experiences',['Source','Observation','Recorded'],(memory.experiences||[]).map(e=>[e.source,e.observation,adminTime(e.observed_at)]));

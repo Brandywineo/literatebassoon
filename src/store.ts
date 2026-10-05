@@ -17,6 +17,7 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS kestrel_lessons(kind TEXT PRIMARY KEY,lesson TEXT NOT NULL,evidence_count INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_memory_decisions(reply_id TEXT PRIMARY KEY,selected TEXT NOT NULL,created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_reflections(id TEXT PRIMARY KEY,started_at INTEGER NOT NULL,status TEXT NOT NULL,evidence_count INTEGER NOT NULL,error_code TEXT);
+    CREATE TABLE IF NOT EXISTS kestrel_insight_checks(topic TEXT PRIMARY KEY,status TEXT NOT NULL,reason TEXT NOT NULL,checked_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_insights(topic TEXT PRIMARY KEY,lesson TEXT NOT NULL,evidence TEXT NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS kestrel_insight_history(reflection_id TEXT NOT NULL,topic TEXT NOT NULL,lesson TEXT NOT NULL,evidence TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(reflection_id,topic));
     CREATE TABLE IF NOT EXISTS kestrel_memory_state(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL);`);

@@ -5,6 +5,14 @@ type Store=ReturnType<typeof openStore>;
 // Lessons are derived from observed outcomes, never from instructions in social content.
 // No additional model calls, and no ability to alter money, credentials or operating limits.
 const rules:Record<string,string>={
+ reply_too_many_questions:'A draft asked too many questions. Contribute a concrete suggestion first and ask at most one question.',
+ reply_too_short:'A draft was too short. Provide a substantive, specific contribution within the reply length limits.',
+ reply_too_long:'A draft exceeded the reply length limit. Keep the response concise and within 1200 characters.',
+ reply_invalid_type:'A model response was not text. Produce a plain text reply.',
+ reply_promotion_or_link:'A draft contained promotion or a link. Contribute directly without links or advertising.',
+ reply_credential_or_solicitation:'A draft requested credentials or solicited information. Never request secrets or solicit transfers.',
+ reply_unsafe_or_boilerplate:'A draft contained unsafe language or boilerplate. Write a concrete contribution without embedded instructions or unsupported guarantees.',
+ visible_after_verification_failure:'A comment was observed publicly visible despite failed or expired verification. Verification failure alone does not establish delivery failure.',
  verification_failure:'A submitted comment can remain visible after failed or expired verification. Treat visibility and verification independently. Never claim verification success from visibility alone.',
  source_changed:'Source content changed between discovery and dispatch. Refresh source evidence before contributing; do not rely on old snapshots.',
  reply_quality_rejected:'A previous draft failed quality checks. Contribute one concrete suggestion, avoid promotion and ask at most one question.',
@@ -26,9 +34,13 @@ export function learnFromOutcomes(store:Store,now=Date.now()){
    record('reply:'+row.id,String(row.status),kind,'Reply outcome: '+row.status);
   }
   for(const row of store.db.prepare("SELECT id,error_code FROM social_generation WHERE status='FAILED' ORDER BY started_at DESC LIMIT 200").all()){
-   const safe=String(row.error_code);const kind=['source_changed','reply_quality_rejected','reply_not_grounded'].includes(safe)?safe:'model_failure';
+   const safe=String(row.error_code);const kind=Object.hasOwn(rules,safe)?safe:'model_failure';
    record('generation:'+row.id,'failed',kind,'Generation outcome: '+kind);
   }
+  for(const row of store.db.prepare("SELECT r.id,r.status,v.visibility,v.verification_status FROM social_replies r JOIN social_visibility v ON v.reply_id=r.id WHERE v.error_code IS NULL AND v.visibility='VISIBLE' AND r.status IN ('VERIFICATION_FAILED','VERIFICATION_EXPIRED') ORDER BY r.rowid DESC LIMIT 200").all()){
+   record('visibility:'+row.id,String(row.status)+':VISIBLE','visible_after_verification_failure','Comment publicly observed VISIBLE while local verification outcome is '+row.status+'. Delivery and verification are separate observations.');
+  }
+  assessInsights(store,now);
   // A successful later verification supersedes the interpretation of that specific event,
   // while its earlier failure stays in the history rather than being silently erased.
   store.db.prepare('INSERT INTO kestrel_memory_state(id,checked_at) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at').run(now);
@@ -41,7 +53,7 @@ export function retrieveMemory(store:Store,replyId:string,source:string,now=Date
  const lessons=store.db.prepare('SELECT kind,lesson,evidence_count,updated_at FROM kestrel_lessons ORDER BY evidence_count DESC,updated_at DESC LIMIT 6').all();
  // Prefer successful examples with lexical overlap. Stored conversation text is untrusted data.
  const examples=store.db.prepare(`SELECT r.id,r.body,d.title FROM social_replies r JOIN social_discussions d ON d.id=r.post_id WHERE r.status='PUBLISHED' AND r.id<>? ORDER BY r.attempted_at DESC LIMIT 50`).all(replyId).map(r=>({...r,score:[...words(String(r.title)+' '+String(r.body))].filter(w=>terms.has(w)).length})).filter(r=>r.score>=3).sort((a,b)=>b.score-a.score).slice(0,2);
- const insights=store.db.prepare('SELECT topic,lesson FROM kestrel_insights ORDER BY updated_at DESC LIMIT 4').all();
+ const insights=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 4").all();
  const selected:{type:string,id:string}[]=[];let context='';
  const budget=Math.max(0,Math.min(3200,12000-source.length));
  const add=(type:string,id:string,text:string)=>{if(context.length+text.length>budget)return;context+=text;selected.push({type,id});};
@@ -51,7 +63,7 @@ export function retrieveMemory(store:Store,replyId:string,source:string,now=Date
  store.db.prepare('INSERT OR IGNORE INTO kestrel_memory_decisions(reply_id,selected,created_at) VALUES(?,?,?)').run(replyId,JSON.stringify(selected),now);
  return context;
 }
-export function memorySnapshot(store:Store){return {insights:store.db.prepare('SELECT * FROM kestrel_insights').all(),revisions:store.db.prepare('SELECT * FROM kestrel_insight_history ORDER BY created_at DESC LIMIT 50').all(),reflections:store.db.prepare('SELECT * FROM kestrel_reflections ORDER BY started_at DESC LIMIT 30').all(),state:store.db.prepare('SELECT checked_at FROM kestrel_memory_state WHERE id=1').get()||null,lessons:store.db.prepare('SELECT * FROM kestrel_lessons ORDER BY updated_at DESC').all(),experiences:store.db.prepare('SELECT * FROM kestrel_experience ORDER BY observed_at DESC,id DESC LIMIT 100').all(),decisions:store.db.prepare('SELECT * FROM kestrel_memory_decisions ORDER BY created_at DESC LIMIT 50').all()};}
+export function memorySnapshot(store:Store){return {insights:store.db.prepare('SELECT i.*,c.status AS assessment,c.reason AS assessment_reason FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic').all(),revisions:store.db.prepare('SELECT * FROM kestrel_insight_history ORDER BY created_at DESC LIMIT 50').all(),reflections:store.db.prepare('SELECT * FROM kestrel_reflections ORDER BY started_at DESC LIMIT 30').all(),state:store.db.prepare('SELECT checked_at FROM kestrel_memory_state WHERE id=1').get()||null,lessons:store.db.prepare('SELECT * FROM kestrel_lessons ORDER BY updated_at DESC').all(),experiences:store.db.prepare('SELECT * FROM kestrel_experience ORDER BY observed_at DESC,id DESC LIMIT 100').all(),decisions:store.db.prepare('SELECT * FROM kestrel_memory_decisions ORDER BY created_at DESC LIMIT 50').all()};}
 
 // Model reflection can revise its own hypotheses. Reservations survive crashes.
 export async function reflectOnMemory(store:Store,generateText:typeof import('./models.ts').generate,now=Date.now()){
@@ -74,7 +86,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
  });
  if(!payload)return {skipped:true};
  try{
-  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence,current_hypotheses:payload.current}));
+  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence,current_hypotheses:payload.current,assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
   let parsed:any;try{parsed=JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('reflection_invalid_json');}
   const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability'];
   if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('reflection_invalid_shape');
@@ -91,6 +103,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
     store.db.prepare('INSERT INTO kestrel_insight_history(reflection_id,topic,lesson,evidence,created_at) VALUES(?,?,?,?,?)').run(payload.id,l.topic,l.lesson,evidence,now);
     store.db.prepare('INSERT INTO kestrel_insights(topic,lesson,evidence,updated_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET lesson=excluded.lesson,evidence=excluded.evidence,updated_at=excluded.updated_at').run(l.topic,l.lesson,evidence,now);
    }
+   assessInsights(store,now);
    store.db.prepare("UPDATE kestrel_reflections SET status='COMPLETED' WHERE id=?").run(payload.id);
   });return {learned:parsed.lessons.length};
  }catch(error){
@@ -98,5 +111,15 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
   const provider=['empty_response','incomplete_response','response_too_large','insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','billing_hard_limit_reached'];
   const code=error instanceof ModelError&&(provider.includes(error.message)||/^http_\d{3}$/.test(error.message))?'reflection_model_'+error.message:error instanceof Error&&allowed.includes(error.message)?error.message:error instanceof Error&&error.name==='TimeoutError'?'reflection_timeout':'reflection_model_or_storage_error';
   store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code=? WHERE id=?").run(code,payload.id);return {error_code:code};
+ }
+}
+
+// Bounded contradiction checks; unknown claims stay UNTESTED rather than being marked true.
+export function assessInsights(store:Store,now=Date.now()){
+ const visible=Number(store.db.prepare("SELECT count(*) AS n FROM social_replies r JOIN social_visibility v ON v.reply_id=r.id WHERE r.status IN ('VERIFICATION_FAILED','VERIFICATION_EXPIRED') AND v.visibility='VISIBLE' AND v.error_code IS NULL").get()?.n)>0;
+ for(const i of store.db.prepare('SELECT topic,lesson FROM kestrel_insights').all()){
+  const text=String(i.lesson);
+  const contradicted=visible&&/verification (?:failures?|errors?).{0,35}(?:indicate|prove|mean|cause|prevent).{0,25}(?:delivery (?:issues?|failure)|not (?:delivered|visible)|unpublished)/i.test(text);
+  store.db.prepare('INSERT INTO kestrel_insight_checks(topic,status,reason,checked_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET status=excluded.status,reason=excluded.reason,checked_at=excluded.checked_at').run(i.topic,contradicted?'CONTRADICTED':'UNTESTED',contradicted?'visible_comments_despite_failed_verification':'insufficient_evidence_to_validate_hypothesis',now);
  }
 }

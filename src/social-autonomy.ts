@@ -24,8 +24,13 @@ export function setAutonomy(store:Store,enabled:boolean){
  store.transaction(()=>{store.db.prepare('UPDATE social_autonomy SET enabled=?,error_code=NULL WHERE id=1').run(enabled?1:0);store.audit(enabled?'social_autonomy_enabled':'social_autonomy_paused','KestrelField');});return autonomyStatus(store);
 }
 export function validateAutonomousReply(body:unknown,source:string){
- if(typeof body!=='string'||body.trim().length<80||body.length>1200||(body.match(/\?/g)||[]).length>1)throw Error('reply_quality_rejected');
- if(/https?:|www\.|clicknlist|\[[^\]]*\]\(|<a\b|api[_ -]?key|seed phrase|private key|send (?:me|us)|guaranteed|ignore (?:previous|all)|as an ai|```/i.test(body))throw Error('reply_quality_rejected');
+ if(typeof body!=='string')throw Error('reply_invalid_type');
+ if(body.trim().length<80)throw Error('reply_too_short');
+ if(body.length>1200)throw Error('reply_too_long');
+ if((body.match(/\?/g)||[]).length>1)throw Error('reply_too_many_questions');
+ if(/https?:|www\.|clicknlist|\[[^\]]*\]\(|<a\b/i.test(body))throw Error('reply_promotion_or_link');
+ if(/api[_ -]?key|seed phrase|private key|send (?:me|us)/i.test(body))throw Error('reply_credential_or_solicitation');
+ if(/guaranteed|ignore (?:previous|all)|as an ai|```/i.test(body))throw Error('reply_unsafe_or_boilerplate');
  const words=(s:string)=>new Set(s.toLowerCase().match(/[a-z]{5,}/g)||[]);
  const sourceWords=words(source),shared=[...words(body)].filter(w=>sourceWords.has(w));
  if(shared.length<3)throw Error('reply_not_grounded');
@@ -81,7 +86,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(result.status==='PENDING_VERIFICATION'){await processChallenges(store,path,fetcher,Date.now(),generateText);result={...result,status:String(store.db.prepare('SELECT status FROM social_replies WHERE id=?').get(id)?.status)};}
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
-  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded'].includes(e.message)?e.message:'social_cycle_failed';
+  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate'].includes(e.message)?e.message:'social_cycle_failed';
   store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=? WHERE id=?").run(code,id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
  }
 }
