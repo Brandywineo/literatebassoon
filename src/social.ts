@@ -1,3 +1,4 @@
+import {socialLimits} from './social-policy.ts';
 import {MoltbookVerificationError,verificationReason,recordVerificationResponse} from './verification-diagnostics.ts';
 import {challengeDeadline} from './social-verification.ts';
 import {pathToFileURL} from 'node:url';
@@ -38,7 +39,7 @@ export async function publishReply(store:Store,id:string,path=credentialPath(),f
  const reply=store.transaction(()=>{
   if(!authorize())throw Error('Autonomous publishing is paused');
   const row=store.db.prepare("SELECT * FROM social_replies WHERE id=? AND status='APPROVED' AND attempted_at IS NULL").get(id);if(!row)throw Error('An approved unattempted reply is required');
-  const count=store.db.prepare('SELECT count(*) AS n,max(attempted_at) AS last FROM social_replies WHERE attempted_at>=?').get(now-86400000)!;if(Number(count.n)>=3)throw Error('Daily reply limit reached (three attempts per rolling day)');if(count.last!=null&&now-Number(count.last)<120000)throw Error('Wait two minutes between replies');
+  const count=store.db.prepare('SELECT count(*) AS n,max(attempted_at) AS last FROM social_replies WHERE attempted_at>=?').get(now-86400000)!;if(Number(count.n)>=socialLimits.reply_attempts)throw Error('Daily reply limit reached (four attempts per rolling day)');if(count.last!=null&&now-Number(count.last)<120000)throw Error('Wait two minutes between replies');
   if(store.db.prepare('SELECT id FROM social_replies WHERE content_hash=?').get(hash(String(row.body).trim().replace(/\s+/g,' '))))throw Error('This reply content was already attempted');
   store.db.prepare("UPDATE social_replies SET status='SENDING',attempted_at=?,content_hash=? WHERE id=?").run(now,hash(String(row.body).trim().replace(/\s+/g,' ')),id);store.audit('social_reply_attempt',id);return row;
  });

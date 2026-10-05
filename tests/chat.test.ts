@@ -12,9 +12,9 @@ test('failure diagnostics never echo secrets and interrupted requests are not re
 test('chat status distinguishes rolling generation limits from writes and supplies exact eligibility',()=>{const x=setup();try{
  const now=Date.UTC(2026,9,5,10),first=now-16*3600000;
  x.store.db.prepare('UPDATE social_autonomy SET enabled=1,checked_at=? WHERE id=1').run(now-2*3600000);
- for(let i=0;i<3;i++)x.store.db.prepare("INSERT INTO social_generation(id,post_id,status,started_at) VALUES(?,?,'FAILED',?)").run('status-'+i,'post-'+i,first+i*3600000);
+ for(let i=0;i<6;i++)x.store.db.prepare("INSERT INTO social_generation(id,post_id,status,started_at) VALUES(?,?,'FAILED',?)").run('status-'+i,'post-'+i,first+i*3600000);
  const facts=chatStatusFacts(x.store,now);
- assert.equal(facts.waiting_reason,'generation_daily_limit');assert.equal(facts.generation_attempts,3);assert.equal(facts.reply_write_attempts,0);
+ assert.equal(facts.waiting_reason,'generation_daily_limit');assert.equal(facts.generation_attempts,6);assert.equal(facts.reply_write_attempts,0);
  assert.equal(facts.seconds_until_eligible,8*3600);assert.equal(facts.next_eligible_utc,new Date(first+86400000).toISOString());assert.match(facts.next_eligible_eat!,/EAT$/);assert.match(facts.window,/not lifetime/);
 }finally{x.close();}});
 

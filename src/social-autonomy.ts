@@ -1,3 +1,4 @@
+import {socialLimits,unansweredIncoming,retryEligibleIncoming,retryableReplyErrors} from './social-policy.ts';
 import {chooseDiscussion,reservePlan,refreshPlanning} from './planning.ts';
 import {learnFromOutcomes,retrieveMemory} from './memory.ts';
 import {readThread,scanFollowups} from './social-threads.ts';
@@ -15,10 +16,10 @@ export function autonomyStatus(store:Store,now=Date.now()){
  const generations=store.db.prepare('SELECT count(*) AS n,min(started_at) AS first FROM social_generation WHERE started_at>=?').get(now-86400000)!;
  const solver=store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts WHERE started_at>=?').get(now-86400000)!;
  const counts=store.db.prepare(`SELECT count(*) AS total,sum(CASE WHEN v.visibility='VISIBLE' THEN 1 ELSE 0 END) AS visible,sum(CASE WHEN r.status='PUBLISHED' OR v.verification_status='verified' THEN 1 ELSE 0 END) AS verified FROM social_replies r LEFT JOIN social_visibility v ON v.reply_id=r.id WHERE r.attempted_at>=?`).get(now-86400000)!;
- const waits=[{reason:'generation_daily_limit',until:Number(generations.n)>=3?Number(generations.first)+86400000:0},{reason:'reply_daily_limit',until:Number(writes.n)>=3?Number(writes.first)+86400000:0},{reason:'hourly_cooldown',until:Number(row.checked_at)+3600000},{reason:'reply_interval',until:writes.last!=null?Number(writes.last)+3600000:0}].filter(w=>w.until>now).sort((a,b)=>b.until-a.until);
+ const waits=[{reason:'generation_daily_limit',until:Number(generations.n)>=socialLimits.generation_attempts?Number(generations.first)+86400000:0},{reason:'reply_daily_limit',until:Number(writes.n)>=socialLimits.reply_attempts?Number(writes.first)+86400000:0},{reason:'hourly_cooldown',until:Number(row.checked_at)+3600000},{reason:'reply_interval',until:writes.last!=null?Number(writes.last)+3600000:0}].filter(w=>w.until>now).sort((a,b)=>b.until-a.until);
  const waiting_reason=blocked?'blocked_'+blocked:!row.enabled?'autonomy_paused':!store.settings().enabled?'model_processing_paused':waits[0]?.reason||null;
  const next_eligible_at=!blocked&&row.enabled&&store.settings().enabled&&waits.length?waits[0].until:null;
- return {observed_at:now,waiting_reason,next_eligible_at,reply_attempts:Number(writes.n),visible_replies:Number(counts.visible||0),verified_replies:Number(counts.verified||0),verification_attempts:Number(solver.n),limits:{reply_attempts:3,generation_attempts:3,verification_attempts:3,window_hours:24},...row,enabled:Boolean(row.enabled),blocked:blocked||null,generation_attempts:Number(store.db.prepare('SELECT count(*) AS n FROM social_generation WHERE started_at>=?').get(now-86400000)?.n),thread_scan:store.db.prepare('SELECT * FROM social_thread_scan WHERE id=1').get(),incoming_waiting:Number(store.db.prepare('SELECT count(*) AS n FROM social_incoming i WHERE NOT EXISTS(SELECT 1 FROM social_replies r WHERE r.parent_id=i.id) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.parent_id=i.id)').get()?.n)};
+ return {observed_at:now,waiting_reason,next_eligible_at,reply_attempts:Number(writes.n),visible_replies:Number(counts.visible||0),verified_replies:Number(counts.verified||0),verification_attempts:Number(solver.n),limits:socialLimits,...row,enabled:Boolean(row.enabled),blocked:blocked||null,generation_attempts:Number(store.db.prepare('SELECT count(*) AS n FROM social_generation WHERE started_at>=?').get(now-86400000)?.n),thread_scan:store.db.prepare('SELECT * FROM social_thread_scan WHERE id=1').get(),incoming_waiting:Number(store.db.prepare(`SELECT count(*) AS n FROM social_incoming i WHERE ${unansweredIncoming}`).get()?.n)};
 }
 export function setAutonomy(store:Store,enabled:boolean){
  if(typeof enabled!=='boolean')throw Error('enabled must be boolean');
@@ -56,13 +57,13 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(!status.enabled)return skip('autonomy_paused');
   if(!cfg.enabled)return skip('model_processing_paused');
   if(status.blocked)return skip('blocked_'+status.blocked);
-  if(status.generation_attempts>=3){const first=store.db.prepare('SELECT min(started_at) AS n FROM social_generation WHERE started_at>=?').get(now-86400000)!;return skip('generation_daily_limit',Number(first.n)+86400000);}
+  if(status.generation_attempts>=socialLimits.generation_attempts){const first=store.db.prepare('SELECT min(started_at) AS n FROM social_generation WHERE started_at>=?').get(now-86400000)!;return skip('generation_daily_limit',Number(first.n)+86400000);}
   if(now-Number(status.checked_at)<3600000)return skip('hourly_cooldown',Number(status.checked_at)+3600000);
   const attempts=store.db.prepare('SELECT count(*) AS n,min(attempted_at) AS first,max(attempted_at) AS last FROM social_replies WHERE attempted_at>=?').get(now-86400000)!;
-  if(Number(attempts.n)>=3)return skip('reply_daily_limit',Number(attempts.first)+86400000);
+  if(Number(attempts.n)>=socialLimits.reply_attempts)return skip('reply_daily_limit',Number(attempts.first)+86400000);
   if(attempts.last!=null&&now-Number(attempts.last)<3600000)return skip('reply_interval',Number(attempts.last)+3600000);
   if(store.db.prepare("SELECT id FROM jobs WHERE status='QUEUED' LIMIT 1").get())return skip('customer_jobs_waiting');
-  const incoming=store.db.prepare(`SELECT i.*,r.body AS previous_body FROM social_incoming i JOIN social_replies r ON r.comment_id=i.parent_id AND (r.status='PUBLISHED' OR EXISTS(SELECT 1 FROM social_visibility v WHERE v.reply_id=r.id AND v.visibility='VISIBLE' AND v.error_code IS NULL AND v.checked_at>=i.seen_at)) WHERE i.seen_at>=? AND NOT EXISTS(SELECT 1 FROM social_replies sent WHERE sent.parent_id=i.id) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.parent_id=i.id) AND (SELECT count(*) FROM social_replies sent WHERE sent.post_id=i.post_id AND sent.parent_id IS NOT NULL)<2 ORDER BY i.source_created_at DESC LIMIT 1`).get(now-3600000);
+  const incoming=store.db.prepare(`SELECT i.*,r.body AS previous_body FROM social_incoming i JOIN social_replies r ON r.comment_id=i.parent_id AND (r.status='PUBLISHED' OR EXISTS(SELECT 1 FROM social_visibility v WHERE v.reply_id=r.id AND v.visibility='VISIBLE' AND v.error_code IS NULL AND v.checked_at>=i.seen_at)) WHERE i.seen_at>=? AND ${retryEligibleIncoming} AND (SELECT count(*) FROM social_replies sent WHERE sent.post_id=i.post_id AND sent.parent_id IS NOT NULL)<2 ORDER BY i.source_created_at DESC LIMIT 1`).get(now-3600000);
   const selected=incoming?null:chooseDiscussion(store,now);
   const p=incoming?store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(incoming.post_id):selected?.p;
   if(!p)return skip('no_fresh_unanswered_source');
@@ -80,6 +81,8 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(incoming){
    const current=(await readThread(String(p.id),path,fetcher)).find(r=>r.id===incoming.id);
    if(!current||current.parent_id!==incoming.parent_id||current.author?.name!==incoming.author||current.content!==incoming.body||current.is_spam||current.is_deleted)throw Error('source_changed');
+   const prior=store.db.prepare("SELECT error_code FROM social_generation WHERE parent_id=? AND status='FAILED' ORDER BY started_at DESC LIMIT 1").get(incoming.id);
+   if(prior&&retryableReplyErrors.includes(String(prior.error_code) as any))source+='\nYour previous draft was rejected before posting: '+prior.error_code+'. Correct that issue; this is the only regeneration retry for this message.';
    source+='\nYour previous comment (context only): '+String(incoming.previous_body).slice(0,1200)+'\nReply directly to this agent response: '+String(incoming.body).slice(0,6000);
   }
   const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source+retrieveMemory(store,id,source,now,String(incoming?.author||p.author)),fetcher);

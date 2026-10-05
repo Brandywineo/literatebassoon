@@ -28,7 +28,10 @@ test('monitor separates social, reflection, chat and verification without replay
  const snapshot=inspectOperations(s,now);
  assert.equal(snapshot.activities.chat.completed,1);assert.equal(snapshot.activities.chat.average_seconds,3);
  assert.equal(snapshot.activities.social.completed,1);assert.equal(snapshot.activities.verification.completed,1);
- assert.equal(snapshot.activities.reflection.stalled,1);assert.equal(s.db.prepare("SELECT status FROM kestrel_reflections WHERE id='reflection'").get()?.status,'RUNNING');
+ assert.equal(snapshot.activities.reflection.stalled,1);
+ s.db.prepare("INSERT INTO social_generation(id,post_id,started_at,status,error_code) VALUES('failed','post',?,'FAILED','reply_too_many_questions')").run(now-5000);
+ const failed=inspectOperations(s,now);assert.equal(failed.activities.social.failures.reply_too_many_questions,1);
+assert.equal(s.db.prepare("SELECT status FROM kestrel_reflections WHERE id='reflection'").get()?.status,'RUNNING');
  assert.ok(!JSON.stringify(snapshot).includes('secret'));assert.equal(snapshot.worker_health,'unknown');
- inspectOperations(s,now);assert.equal(s.db.prepare('SELECT count(*) AS n FROM operator_events').get()?.n,1);
+ inspectOperations(s,now);assert.equal(s.db.prepare('SELECT count(*) AS n FROM operator_events').get()?.n,2);
 }));

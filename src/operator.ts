@@ -6,7 +6,8 @@ function activity(store:Store,table:string,success:string[],running:string[],now
  const recent=rows.filter(r=>Number(r.started_at)>=now-86400000),active=rows.filter(r=>running.includes(String(r.status)));
  const durations=recent.filter(r=>r.finished_at!=null&&Number(r.finished_at)>=Number(r.started_at)).map(r=>(Number(r.finished_at)-Number(r.started_at))/1000);
  const last=rows.filter(r=>r.finished_at!=null).sort((a,b)=>Number(b.finished_at)-Number(a.finished_at))[0];
- return {attempts:recent.length,completed:recent.filter(r=>success.includes(String(r.status))).length,failed:recent.filter(r=>['FAILED','NEEDS_REVIEW'].includes(String(r.status))).length,running:active.length,stalled:active.filter(r=>now-Number(r.started_at)>600000).length,average_seconds:durations.length?Math.round(durations.reduce((a,b)=>a+b,0)/durations.length*10)/10:null,last_finished_at:last?.finished_at??null,last_status:last?.status??null,last_error:last?.error_code??null};
+ const failures=recent.filter(r=>r.error_code!=null).reduce((counts:Record<string,number>,r)=>{const code=String(r.error_code);counts[code]=(counts[code]||0)+1;return counts;},{});
+ return {failures,attempts:recent.length,completed:recent.filter(r=>success.includes(String(r.status))).length,failed:recent.filter(r=>['FAILED','NEEDS_REVIEW','VERIFICATION_FAILED','VERIFICATION_EXPIRED'].includes(String(r.status))).length,running:active.length,stalled:active.filter(r=>now-Number(r.started_at)>600000).length,average_seconds:durations.length?Math.round(durations.reduce((a,b)=>a+b,0)/durations.length*10)/10:null,last_finished_at:last?.finished_at??null,last_status:last?.status??null,last_error:last?.error_code??null};
 }
 // Monitoring reads aggregate state only; it never sends job contents to a model.
 export function inspectOperations(store:Store,now=Date.now()){

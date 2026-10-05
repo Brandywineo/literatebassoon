@@ -48,3 +48,14 @@ test('failed automatic answer retains numeric diagnostics but no verification cr
  const row=s.db.prepare('SELECT * FROM social_verification_attempts').get()!;assert.equal(row.equation,'25 - 7');assert.equal(row.answer,'18.00');assert.equal(row.http_status,400);assert.equal(row.response_reason,'incorrect_answer');assert.equal(row.status,'VERIFICATION_FAILED');assert.ok(row.finished_at);assert.equal(sends,1);assert.equal(JSON.stringify(row).includes('private-'),false);
  }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
 });
+test('fourth challenge call is allowed but fifth is blocked by persistent rolling budget',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/verify-budget-'),store=openStore(dir+'/data'),now=Date.now();try{
+ store.setOperator(true,'ollama','test',50);store.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();
+ store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);
+ for(let i=0;i<3;i++)store.db.prepare("INSERT INTO social_verification_attempts(target,started_at,status) VALUES(?,?,'NEEDS_REVIEW')").run('previous:'+i,now-1000);
+ const insert=(id:string)=>store.db.prepare("INSERT INTO social_replies(id,post_id,parent_id,body,status,challenge,expires_at) VALUES(?,?,?,?,'PENDING_VERIFICATION','unknown',?)").run(id,'p',id,'text',new Date(now+300000).toISOString());
+ insert('fourth');let calls=0;const gen=async()=>{calls++;return {text:'ambiguous',provider:'ollama',model:'test'};};const network=async()=>{throw Error('No external writes allowed');};
+ await processChallenges(store,dir+'/missing.json',network as typeof fetch,now,gen);assert.equal(calls,1);
+ insert('fifth');await processChallenges(store,dir+'/missing.json',network as typeof fetch,now+1,gen);assert.equal(calls,1);assert.equal(store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts').get()?.n,4);
+ }finally{store.db.close();rmSync(dir,{recursive:true,force:true});}
+});

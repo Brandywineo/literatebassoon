@@ -1,3 +1,4 @@
+import {socialLimits} from './social-policy.ts';
 import type {openStore} from './store.ts';
 import {generate} from './models.ts';
 import {verifyReply} from './social.ts';
@@ -27,9 +28,9 @@ export function calculateChallenge(raw:string){
 export async function processChallenges(store:Store,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now(),generateText=generate){
  expireChallenges(store,now);
  const cfg=store.settings();if(!cfg.enabled||!store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)return;
- // One persistent attempt per content item, at most three solver calls per rolling day.
+ // One persistent attempt per content item, at most four solver calls per rolling day.
  const reserved=store.transaction(()=>{
-  if(Number(store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts WHERE started_at>=?').get(now-86400000)?.n)>=3)return null;
+  if(Number(store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts WHERE started_at>=?').get(now-86400000)?.n)>=socialLimits.verification_attempts)return null;
   for(const [table,key,kind] of [['social_replies','id','reply'],['moltbook_publications','draft_id','post']]){
    const row=store.db.prepare(`SELECT * FROM ${table} WHERE status='PENDING_VERIFICATION' AND NOT EXISTS(SELECT 1 FROM social_verification_attempts WHERE target=?||${key}) LIMIT 1`).get(kind+':');
    if(!row)continue;
