@@ -76,7 +76,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
  const payload=store.transaction(()=>{
   if(!cfg.enabled||!store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)return null;
   if(store.db.prepare("SELECT id FROM jobs WHERE status='QUEUED' LIMIT 1").get())return null;
-  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code='reflection_interrupted' WHERE status='RUNNING' AND started_at<?").run(now-600000);
+  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code='reflection_interrupted',finished_at=? WHERE status='RUNNING' AND started_at<?").run(now,now-600000);
   if(store.db.prepare("SELECT id FROM kestrel_reflections WHERE status='RUNNING' LIMIT 1").get())return null;
   const budget=store.db.prepare('SELECT count(*) AS n,max(started_at) AS last FROM kestrel_reflections WHERE started_at>=?').get(now-86400000)!;
   if(Number(budget.n)>=2||(budget.last!=null&&now-Number(budget.last)<3600000))return null;
@@ -103,19 +103,20 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
   }
   // No review gate. The agent applies valid hypotheses and preserves revision history.
   store.transaction(()=>{
+   if(store.db.prepare('SELECT status FROM kestrel_reflections WHERE id=?').get(payload.id)?.status!=='RUNNING')throw Error('reflection_interrupted');
    for(const l of parsed.lessons){
     const evidence=JSON.stringify(l.evidence);
     store.db.prepare('INSERT INTO kestrel_insight_history(reflection_id,topic,lesson,evidence,created_at) VALUES(?,?,?,?,?)').run(payload.id,l.topic,l.lesson,evidence,now);
     store.db.prepare('INSERT INTO kestrel_insights(topic,lesson,evidence,updated_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET lesson=excluded.lesson,evidence=excluded.evidence,updated_at=excluded.updated_at').run(l.topic,l.lesson,evidence,now);
    }
    assessInsights(store,now);
-   store.db.prepare("UPDATE kestrel_reflections SET status='COMPLETED' WHERE id=?").run(payload.id);
+   store.db.prepare("UPDATE kestrel_reflections SET status='COMPLETED',finished_at=? WHERE id=?").run(Date.now(),payload.id);
   });return {learned:parsed.lessons.length};
  }catch(error){
   const allowed=['reflection_invalid_json','reflection_invalid_shape','reflection_unknown_evidence','reflection_invalid_lesson'];
   const provider=['empty_response','incomplete_response','response_too_large','insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','billing_hard_limit_reached'];
   const code=error instanceof ModelError&&(provider.includes(error.message)||/^http_\d{3}$/.test(error.message))?'reflection_model_'+error.message:error instanceof Error&&allowed.includes(error.message)?error.message:error instanceof Error&&error.name==='TimeoutError'?'reflection_timeout':'reflection_model_or_storage_error';
-  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code=? WHERE id=?").run(code,payload.id);return {error_code:code};
+  store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code=?,finished_at=? WHERE id=? AND status='RUNNING'").run(code,Date.now(),payload.id);return {error_code:code};
  }
 }
 

@@ -19,3 +19,16 @@ test('outreach drafts use available services and disclose role without sending',
  assert.throws(()=>createOutreachDraft(s,'ai-summary'),/Available service/);
  s.db.prepare("UPDATE services SET active=0 WHERE id='text-stats'").run();assert.throws(()=>createOutreachDraft(s,'text-stats'),/Available service/);
 }));
+test('monitor separates social, reflection, chat and verification without replaying stalled work',()=>fixture(s=>{
+ const now=Date.now();s.setOperator(true,'ollama','test',50);
+ s.db.prepare("INSERT INTO kestrel_chat(id,request_key,body,status,created_at,started_at,finished_at) VALUES('chat','monitor-chat','secret','ANSWERED',?,?,?)").run(now-5000,now-4000,now-1000);
+ s.db.prepare("INSERT INTO social_generation(id,post_id,started_at,status,finished_at) VALUES('generation','post',?,'GENERATED',?)").run(now-10000,now-2000);
+ s.db.prepare("INSERT INTO kestrel_reflections(id,started_at,status,evidence_count) VALUES('reflection',?,'RUNNING',1)").run(now-700000);
+ s.db.prepare("INSERT INTO social_verification_attempts(target,started_at,status,finished_at) VALUES('reply:test',?,'PUBLISHED',?)").run(now-6000,now-1000);
+ const snapshot=inspectOperations(s,now);
+ assert.equal(snapshot.activities.chat.completed,1);assert.equal(snapshot.activities.chat.average_seconds,3);
+ assert.equal(snapshot.activities.social.completed,1);assert.equal(snapshot.activities.verification.completed,1);
+ assert.equal(snapshot.activities.reflection.stalled,1);assert.equal(s.db.prepare("SELECT status FROM kestrel_reflections WHERE id='reflection'").get()?.status,'RUNNING');
+ assert.ok(!JSON.stringify(snapshot).includes('secret'));assert.equal(snapshot.worker_health,'unknown');
+ inspectOperations(s,now);assert.equal(s.db.prepare('SELECT count(*) AS n FROM operator_events').get()?.n,1);
+}));

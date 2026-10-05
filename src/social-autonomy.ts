@@ -86,7 +86,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   const reply=validateAutonomousReply(output.text,source);
   store.transaction(()=>{
    store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,parent_id) VALUES(?,?,?,'DRAFT',?)").run(id,p.id,reply,incoming?.id||null);
-   store.db.prepare("UPDATE social_generation SET status='GENERATED' WHERE id=?").run(id);
+   store.db.prepare("UPDATE social_generation SET status='GENERATED',finished_at=? WHERE id=?").run(Date.now(),id);
   });
   // Re-check the pause switch after slow generation before authorizing a write.
   if(!autonomyStatus(store,Date.now()).enabled||!store.settings().enabled){store.db.prepare("UPDATE social_autonomy SET last_reason='draft_retained_after_pause' WHERE id=1").run();return {status:'DRAFT'};}
@@ -96,6 +96,6 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
   const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy'].includes(e.message)?e.message:'social_cycle_failed';
-  store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=? WHERE id=?").run(code,id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
+  store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=?,finished_at=? WHERE id=?").run(code,Date.now(),id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
  }
 }

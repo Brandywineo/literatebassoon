@@ -1,5 +1,13 @@
 import type { openStore } from './store.ts';
+import {autonomyStatus} from './social-autonomy.ts';
 type Store=ReturnType<typeof openStore>;
+function activity(store:Store,table:string,success:string[],running:string[],now:number){
+ const rows=store.db.prepare(`SELECT status,started_at,finished_at,error_code FROM ${table} WHERE started_at>=? OR status IN (${running.map(()=>'?').join(',')}) ORDER BY started_at DESC LIMIT 3000`).all(now-86400000,...running);
+ const recent=rows.filter(r=>Number(r.started_at)>=now-86400000),active=rows.filter(r=>running.includes(String(r.status)));
+ const durations=recent.filter(r=>r.finished_at!=null&&Number(r.finished_at)>=Number(r.started_at)).map(r=>(Number(r.finished_at)-Number(r.started_at))/1000);
+ const last=rows.filter(r=>r.finished_at!=null).sort((a,b)=>Number(b.finished_at)-Number(a.finished_at))[0];
+ return {attempts:recent.length,completed:recent.filter(r=>success.includes(String(r.status))).length,failed:recent.filter(r=>['FAILED','NEEDS_REVIEW'].includes(String(r.status))).length,running:active.length,stalled:active.filter(r=>now-Number(r.started_at)>600000).length,average_seconds:durations.length?Math.round(durations.reduce((a,b)=>a+b,0)/durations.length*10)/10:null,last_finished_at:last?.finished_at??null,last_status:last?.status??null,last_error:last?.error_code??null};
+}
 // Monitoring reads aggregate state only; it never sends job contents to a model.
 export function inspectOperations(store:Store,now=Date.now()){
   const db=store.db;
@@ -12,8 +20,14 @@ export function inspectOperations(store:Store,now=Date.now()){
   if(Number(queue.oldest_seconds)>300)alerts.push('An AI job has been waiting for more than five minutes.');
   if(Number(expired.count)>0)alerts.push('An expired worker lease needs recovery.');
   if(failures.length)alerts.push('AI failures were recorded in the last 24 hours; review the failure codes.');
-  const snapshot={checked_at:now,queue:{queued:Number(queue.queued),oldest_seconds:Math.round(Number(queue.oldest_seconds))},runs:{attempts:Number(runs.attempts),completed:Number(runs.completed||0),failed:Number(runs.failed||0),running:Number(runs.running||0),average_seconds:runs.average_ms==null?null:Math.round(Number(runs.average_ms)/100)/10},failures,alerts};
-  const signature=JSON.stringify({queued:snapshot.queue.queued,runs:snapshot.runs,failures,alerts});
+  const activities={chat:activity(store,'kestrel_chat',['ANSWERED'],['PROCESSING'],now),social:activity(store,'social_generation',['GENERATED'],['RUNNING'],now),reflection:activity(store,'kestrel_reflections',['COMPLETED'],['RUNNING'],now),verification:activity(store,'social_verification_attempts',['VERIFIED','PUBLISHED'],['RUNNING'],now)};
+  const social=autonomyStatus(store,now);
+  const worker=db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get();
+  const worker_health=!worker?.heartbeat?'unknown':now-Number(worker.heartbeat)>90000?'stale':String(worker.status);
+  for(const [name,a] of Object.entries(activities))if(a.stalled)alerts.push(`${name}: ${a.stalled} task(s) active for more than ten minutes. Inspect persisted state; no automatic replay.`);
+  if(worker_health==='stale')alerts.push('Worker heartbeat is more than ninety seconds old.');
+  const snapshot={activities,worker_health,social_wait:{reason:social.waiting_reason,next_eligible_at:social.next_eligible_at},checked_at:now,queue:{queued:Number(queue.queued),oldest_seconds:Math.round(Number(queue.oldest_seconds))},runs:{attempts:Number(runs.attempts),completed:Number(runs.completed||0),failed:Number(runs.failed||0),running:Number(runs.running||0),average_seconds:runs.average_ms==null?null:Math.round(Number(runs.average_ms)/100)/10},failures,alerts};
+  const signature=JSON.stringify({queued:snapshot.queue.queued,runs:snapshot.runs,activities,worker_health,social_wait:snapshot.social_wait,failures,alerts});
   store.transaction(()=>{
     const prev=db.prepare('SELECT signature FROM operator_monitor WHERE id=1').get();
     if(prev?.signature!==signature){db.prepare('INSERT INTO operator_events(kind,message) VALUES(?,?)').run(alerts.length?'attention':'status',alerts.length?alerts.join(' '):`Queue: ${snapshot.queue.queued}; completed: ${snapshot.runs.completed}; failed: ${snapshot.runs.failed} in the last 24 hours.`);}
