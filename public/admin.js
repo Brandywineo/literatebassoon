@@ -13,6 +13,9 @@ async function load(){const activeKey=key,data=await api('overview');if(key!==ac
  renderMoney(data.payments,data.services);
  renderSocial(data.social);
  renderChat(data.chat||[]);
+ const planning=data.planning||{};$('#planning-waiting').textContent='Current cycle: '+(planning.waiting?.last_reason||'waiting').replaceAll('_',' ');
+ table('#planning-goals',['Objective','Observed metrics','Checked'],(planning.goals||[]).map(g=>[g.objective,g.metrics,g.checked_at?adminTime(g.checked_at):'Waiting']));
+ table('#planning-actions',['Goal','Source','Selection reason','Score','Execution','Visibility','Failure'],(planning.plans||[]).map(p=>[p.goal_id,p.post_id,p.reason,p.score,p.status,p.visibility||'not observed',p.error_code]));
  const monitor=data.monitor?JSON.parse(data.monitor.snapshot):null;$('#monitor-age').textContent=monitor?'Last check: '+Math.round((Date.now()-monitor.checked_at)/1000)+'s ago · last 24 hours':'Waiting for the worker’s first monitoring check.';
  table('#operations',['Queued AI jobs','Oldest wait','Completed attempts','Failed attempts','Running attempts','Average processing'],monitor?[[monitor.queue.queued,monitor.queue.oldest_seconds+'s',monitor.runs.completed,monitor.runs.failed,monitor.runs.running,monitor.runs.average_seconds==null?'No timings yet':monitor.runs.average_seconds+'s']]:[]);
  $('#findings').replaceChildren();for(const message of monitor?.alerts||[]){const p=document.createElement('p');p.textContent=message;$('#findings').append(p);}for(const failure of monitor?.failures||[]){const p=document.createElement('p');p.textContent=failure.code+': '+failure.count;$('#findings').append(p);}if(monitor&&!monitor.alerts.length)$('#findings').textContent='No findings at the last check.';

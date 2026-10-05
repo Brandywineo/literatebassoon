@@ -1,3 +1,4 @@
+import {planningSnapshot} from './planning.ts';
 import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
 import {autonomyStatus} from './social-autonomy.ts';
@@ -25,7 +26,7 @@ export async function runAdminChat(store:Store,generateText=generate,now=Date.no
  });if(!claim)return false;
  try{
   const {row,cfg}=claim;
-  const state={observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
+  const state={goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
   const history=store.db.prepare("SELECT body,response FROM kestrel_chat WHERE status='ANSWERED' AND created_at<=? AND id<>? ORDER BY rowid DESC LIMIT 6").all(row.created_at,row.id).reverse().map(r=>({Admin:String(r.body).slice(0,500),Kestrel:String(r.response).slice(0,600)}));
   const memory=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 3").all();
   const context={live_state:state,fallible_memory:memory,history,message:{sender:'Admin',body:row.body}};

@@ -1,3 +1,4 @@
+import {chooseDiscussion,reservePlan,refreshPlanning} from './planning.ts';
 import {learnFromOutcomes,retrieveMemory} from './memory.ts';
 import {readThread,scanFollowups} from './social-threads.ts';
 import type {openStore} from './store.ts';
@@ -43,6 +44,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
  await processChallenges(store,path,fetcher,now,generateText);
  await scanFollowups(store,path,fetcher,now);
  learnFromOutcomes(store,now);
+ refreshPlanning(store,now);
  const candidate=store.transaction(()=>{
   const status=autonomyStatus(store,now),cfg=store.settings();
   const skip=(reason:string,next:number|null=null)=>{store.db.prepare('UPDATE social_autonomy SET last_reason=?,last_cycle_at=?,next_cycle_at=? WHERE id=1 AND (last_reason IS NOT ? OR last_cycle_at<?)').run(reason,now,next,reason,now-60000);return null;};
@@ -56,9 +58,11 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(attempts.last!=null&&now-Number(attempts.last)<3600000)return skip('reply_interval',Number(attempts.last)+3600000);
   if(store.db.prepare("SELECT id FROM jobs WHERE status='QUEUED' LIMIT 1").get())return skip('customer_jobs_waiting');
   const incoming=store.db.prepare(`SELECT i.*,r.body AS previous_body FROM social_incoming i JOIN social_replies r ON r.comment_id=i.parent_id AND (r.status='PUBLISHED' OR EXISTS(SELECT 1 FROM social_visibility v WHERE v.reply_id=r.id AND v.visibility='VISIBLE' AND v.error_code IS NULL AND v.checked_at>=i.seen_at)) WHERE i.seen_at>=? AND NOT EXISTS(SELECT 1 FROM social_replies sent WHERE sent.parent_id=i.id) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.parent_id=i.id) AND (SELECT count(*) FROM social_replies sent WHERE sent.post_id=i.post_id AND sent.parent_id IS NOT NULL)<2 ORDER BY i.source_created_at DESC LIMIT 1`).get(now-3600000);
-  let p=incoming?store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(incoming.post_id):store.db.prepare(`SELECT d.* FROM social_discussions d WHERE full_content=1 AND seen_at>=? AND source_created_at IS NOT NULL AND julianday(source_created_at)>=julianday(?) AND NOT EXISTS(SELECT 1 FROM social_replies r WHERE r.post_id=d.id AND r.parent_id IS NULL) AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.post_id=d.id AND g.parent_id IS NULL) ORDER BY source_created_at DESC LIMIT 1`).get(now-3600000,new Date(now-7*86400000).toISOString());
+  const selected=incoming?null:chooseDiscussion(store,now);
+  const p=incoming?store.db.prepare('SELECT * FROM social_discussions WHERE id=?').get(incoming.post_id):selected?.p;
   if(!p)return skip('no_fresh_unanswered_source');
   const id=crypto.randomUUID();store.db.prepare("INSERT INTO social_generation(id,post_id,started_at,status,error_code,parent_id) VALUES(?,?,?,'RUNNING',NULL,?)").run(id,p.id,now,incoming?.id||null);
+  reservePlan(store,id,String(p.id),incoming?'relationships':selected!.goal,incoming?'fresh_direct_response':selected!.reason,incoming?100:selected!.score,now);
   store.db.prepare('UPDATE social_autonomy SET checked_at=?,error_code=NULL,last_cycle_at=?,last_reason=?,next_cycle_at=? WHERE id=1').run(now,now,incoming?'generating_followup':'generating_initial_reply',now+3600000);
   return {p,id,cfg,incoming};
  });
