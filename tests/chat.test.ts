@@ -33,3 +33,17 @@ test('focused chat keeps named conversation and attribution while dropping unrel
  const large=buildChatContext(x.store,'Tell me your goals and status. '+ 'x'.repeat(1900),'current',now,now);assert.ok(JSON.stringify(large).length<=6000);
 }finally{x.close();}});
 test('chat adapter bounds CPU output without raising budgets or accepting truncated output',async()=>{const {generate,ModelError}=await import('../src/models.ts');let options:any;const fake:any=async(_url:any,init:any)=>{options=JSON.parse(init.body).options;return new Response(JSON.stringify({done:true,done_reason:'stop',message:{content:'Admin initiated that contribution.'}}));};await generate({provider:'ollama',model:'test'},'admin-chat','Focused context',fake);assert.equal(options.num_predict,240);await assert.rejects(()=>generate({provider:'ollama',model:'test'},'admin-chat','Focused context',async()=>new Response(JSON.stringify({done:true,done_reason:'length',message:{content:'partial'}}))),ModelError);});
+
+test('named recall beats overlapping verification words, stale wrong chat and recent unrelated replies',async()=>{const {buildChatContext}=await import('../src/admin-chat.ts');const x=setup(),now=Date.now();try{
+ x.store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('hermes','Introduction','My human challenge is to document my journey earning real income honestly.','hermesdejoel','agents',?)").run(now);
+ x.store.db.prepare("INSERT INTO social_replies(id,post_id,body,status) VALUES('hermes-manual','hermes','What concrete task and success criterion are you working toward?','PUBLISHED')").run();
+ for(let i=0;i<105;i++){
+ x.store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES(?,?,?,?,?,?)").run('noise-'+i,'Conversation verification recorded reply context optimisation','Specify resource IDs and observation deadlines.','other-'+i,'agents',now);
+ x.store.db.prepare("INSERT INTO social_replies(id,post_id,body,status) VALUES(?,?,?,'PUBLISHED')").run('noise-reply-'+i,'noise-'+i,'Admin checking conversation recall recorded contribution tester provider interpretation verification.');
+ }
+ x.store.db.prepare("INSERT INTO kestrel_chat(id,request_key,body,response,status,created_at) VALUES('wrong','wrong-key','Tell me about hermesdejoel','Hermes discussed verification deadlines.','ANSWERED',?)").run(now-1);
+ const message='Admin checking conversation recall after the context optimisation. Briefly state what hermesdejoel was trying to achieve, quote or summarise our recorded reply, and identify who initiated it. Separate recorded facts from your interpretation of whether they could be a tester or service provider. Do not post, contact anyone, or change settings.';
+ const c=buildChatContext(x.store,message,'current',now,now);
+ assert.equal(c.conversations.length,1);assert.equal(c.conversations[0].author,'hermesdejoel');assert.equal(c.conversations[0].origin,'ADMIN_INITIATED');assert.match(c.conversations[0].source_excerpt,/earning real income/);assert.match(c.conversations[0].our_reply,/concrete task/);assert.equal(c.history.length,0);assert.ok(!JSON.stringify(c).includes('resource IDs'));
+ const mixed=buildChatContext(x.store,'Compare HERMESDEJOEL and other-104 conversations.','current',now,now);assert.ok(['hermesdejoel','other-104'].includes(String(mixed.conversations[0].author)));
+}finally{x.close();}});

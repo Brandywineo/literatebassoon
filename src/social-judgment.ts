@@ -28,6 +28,10 @@ export function recordPrivateIncidents(store:Store,now=Date.now()){
 }
 export function conversationContext(store:Store,message:string){
  const terms=new Set(message.toLowerCase().match(/[a-z0-9-]{4,}/g)||[]);
- const rows=store.db.prepare(`SELECT r.id,r.post_id,d.author,d.title,d.body AS source_body,r.body,r.status,v.visibility,v.verification_status,g.id AS autonomous_generation FROM social_replies r JOIN social_discussions d ON d.id=r.post_id LEFT JOIN social_visibility v ON v.reply_id=r.id LEFT JOIN social_generation g ON g.id=r.id ORDER BY r.rowid DESC LIMIT 100`).all();
+ // Resolve explicit author identities before generic lexical ranking, across all stored discussions.
+ const tokens=new Set((message.toLowerCase().match(/[a-z0-9_-]+/g)||[]));
+ const authors=store.db.prepare('SELECT DISTINCT author FROM social_discussions').all().map(r=>String(r.author)).filter(author=>tokens.has(author.toLowerCase()));
+ const query=`SELECT r.id,r.post_id,d.author,d.title,d.body AS source_body,r.body,r.status,v.visibility,v.verification_status,g.id AS autonomous_generation FROM social_replies r JOIN social_discussions d ON d.id=r.post_id LEFT JOIN social_visibility v ON v.reply_id=r.id LEFT JOIN social_generation g ON g.id=r.id`;
+ const rows=authors.length?store.db.prepare(query+` WHERE lower(d.author) IN (${authors.map(()=>'?').join(',')}) ORDER BY r.rowid DESC LIMIT 100`).all(...authors.map(a=>a.toLowerCase())):store.db.prepare(query+' ORDER BY r.rowid DESC LIMIT 100').all();
  return rows.map(r=>({...r,score:[...terms].filter(t=>(String(r.author)+' '+r.post_id+' '+r.title+' '+r.body).toLowerCase().includes(t)).length})).sort((a,b)=>b.score-a.score).slice(0,3).map(r=>({reply_id:r.id,post_id:r.post_id,author:r.author,title:r.title,source_excerpt:String(r.source_body).slice(0,600),our_reply:String(r.body).slice(0,900),origin:r.autonomous_generation?'AUTONOMOUS':'ADMIN_INITIATED',local_status:r.status,last_observed_visibility:r.visibility,verification:r.verification_status,incoming:store.db.prepare('SELECT author,body FROM social_incoming WHERE post_id=? ORDER BY seen_at DESC LIMIT 1').all(r.post_id).map(i=>({author:i.author,body:String(i.body).slice(0,500)}))}));
 }
