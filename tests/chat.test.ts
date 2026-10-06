@@ -23,3 +23,13 @@ test('lifetime chat verification includes older published records even without a
  x.store.db.prepare("INSERT INTO social_replies(id,post_id,body,status) VALUES('legacy-reply','legacy','Reply','PUBLISHED')").run();
  const facts=chatStatusFacts(x.store,Date.now());assert.equal(facts.verified_replies,0);assert.equal(facts.lifetime_replies.verified,1);assert.match(facts.verified_count_summary,/all stored history: 1/);
 }finally{x.close();}});
+
+test('focused chat keeps named conversation and attribution while dropping unrelated history and duplicate state',async()=>{const {buildChatContext}=await import('../src/admin-chat.ts');const x=setup(),now=Date.now();try{
+ for(let i=0;i<6;i++)x.store.db.prepare("INSERT INTO kestrel_chat(id,request_key,body,response,status,created_at) VALUES(?,?,?,?,'ANSWERED',?)").run('old-'+i,'old-key-'+i,'Unrelated weather and gardening '+i,'Old unrelated answer '.repeat(200),now-100+i);
+ x.store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('hermes','Introduction',?,'hermesdejoel','agents',?)").run('My human challenge is to document the journey of an agent earning real income. '.repeat(20),now);
+ x.store.db.prepare("INSERT INTO social_replies(id,post_id,body,status) VALUES('manual','hermes','What concrete task and success criterion are you working toward?','PUBLISHED')").run();
+ const c=buildChatContext(x.store,'Recall the hermesdejoel conversation and who initiated our contribution.','current',now,now);
+ assert.equal(c.conversations.length,1);assert.equal(c.conversations[0].origin,'ADMIN_INITIATED');assert.equal(c.history.length,0);assert.ok(!('autonomy' in c.live_state));assert.ok(!('agent_core' in c.live_state));assert.ok(JSON.stringify(c).length<3000);assert.equal(c.live_state.status_facts.lifetime_replies.verified,1);
+ const large=buildChatContext(x.store,'Tell me your goals and status. '+ 'x'.repeat(1900),'current',now,now);assert.ok(JSON.stringify(large).length<=6000);
+}finally{x.close();}});
+test('chat adapter bounds CPU output without raising budgets or accepting truncated output',async()=>{const {generate,ModelError}=await import('../src/models.ts');let options:any;const fake:any=async(_url:any,init:any)=>{options=JSON.parse(init.body).options;return new Response(JSON.stringify({done:true,done_reason:'stop',message:{content:'Admin initiated that contribution.'}}));};await generate({provider:'ollama',model:'test'},'admin-chat','Focused context',fake);assert.equal(options.num_predict,240);await assert.rejects(()=>generate({provider:'ollama',model:'test'},'admin-chat','Focused context',async()=>new Response(JSON.stringify({done:true,done_reason:'length',message:{content:'partial'}}))),ModelError);});

@@ -1,6 +1,5 @@
 import {conversationContext,recordPrivateIncidents} from './social-judgment.ts';
 import {coreSnapshot} from './agent-core.ts';
-import {planningSnapshot} from './planning.ts';
 import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
 import {autonomyStatus} from './social-autonomy.ts';
@@ -26,6 +25,33 @@ export function chatStatusFacts(store:Store,now=Date.now()){
  seconds_until_eligible:next==null?null:Math.max(0,Math.ceil((next-now)/1000)),
  interpretation:'Generation attempts and reply writes have separate limits. A 24-hour rolling window does not mean a fresh 24-hour wait. Eligibility is an estimate, not a promise of publication. Zero verified replies describes this window only. Visibility is separate from verification, accuracy and usefulness. A previous verification failure does not prove verification is currently blocked.'};
 }
+// Keep CPU inference focused: the current request and matching records outrank old chat.
+export function buildChatContext(store:Store,message:string,id:string,createdAt:number,now=Date.now()){
+ const facts=chatStatusFacts(store,now);
+ const {interpretation,verified_count_summary,...statusFacts}=facts;
+ const state:any={status_facts:statusFacts};
+ const operations=/status|limit|eligible|waiting|online|worker|job|failure|incident|verification/i.test(message);
+ const projects=/project|plan|goal|objective|onboarding|investigat/i.test(message);
+ if(operations){state.operator=store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get();state.jobs=store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all();}
+ if(projects){const core=coreSnapshot(store,now);state.agent_core={waiting_reason:core.waiting_reason,projects:core.projects.map(p=>({id:p.id,objective:p.objective,next_step:p.next_step?String(p.next_step).slice(0,240):null}))};}
+ const terms=new Set(message.toLowerCase().match(/[a-z0-9-]{5,}/g)||[]);
+ const matches=(text:string)=>[...terms].some(t=>text.toLowerCase().includes(t));
+ const conversations=conversationContext(store,message).filter(c=>matches(String(c.author)+' '+c.post_id+' '+c.title+' '+c.our_reply)).slice(0,1).map(c=>({...c,source_excerpt:c.source_excerpt.slice(0,600),our_reply:c.our_reply.slice(0,800)}));
+ const recent=store.db.prepare("SELECT body,response FROM kestrel_chat WHERE status='ANSWERED' AND created_at<=? AND id<>? ORDER BY rowid DESC LIMIT 6").all(createdAt,id);
+ const followup=/^(?:what happened|why|how|what about|and|again|explain|continue|that|this)\b/i.test(message.trim());
+ const history=recent.filter((r,i)=>matches(String(r.body))||(i===0&&followup)).slice(0,1).reverse().map(r=>({Admin:String(r.body).slice(0,240),Kestrel:String(r.response).slice(0,320)}));
+ const memory=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 10").all().filter(m=>matches(String(m.lesson))).slice(0,1).map(m=>({topic:m.topic,lesson:String(m.lesson).slice(0,240)}));
+ recordPrivateIncidents(store,now);
+ const incidents=/failure|incident|error|verification|timeout/i.test(message)?store.db.prepare('SELECT source,code FROM kestrel_incidents ORDER BY created_at DESC LIMIT 2').all():[];
+ const context={message:{sender:'Admin',body:message},live_state:state,conversations,history,fallible_memory:memory,private_incidents:incidents,context_limitations:'Selected excerpts only. Omitted or missing records do not prove an event never happened. Admin-initiated contributions are not autonomous discoveries.'};
+ // Preserve the requested conversation and exact status facts; drop optional context first.
+ const size=()=>JSON.stringify(context).length;
+ while(size()>6000&&context.history.length)context.history.pop();
+ while(size()>6000&&context.fallible_memory.length)context.fallible_memory.pop();
+ if(size()>6000)delete state.agent_core;
+ if(size()>6000)throw Error('chat_context_too_large');
+ return context;
+}
 export async function runAdminChat(store:Store,generateText=generate,now=Date.now()){
  const claim=store.transaction(()=>{
   // A crashed request is visibly failed; it is never silently regenerated.
@@ -38,12 +64,8 @@ export async function runAdminChat(store:Store,generateText=generate,now=Date.no
  });if(!claim)return false;
  try{
   const {row,cfg}=claim;
-  const state={agent_core:{projects:coreSnapshot(store,now).projects,waiting_reason:coreSnapshot(store,now).waiting_reason,tasks:coreSnapshot(store,now).tasks.slice(0,2).map(t=>({project:t.project_id,status:t.status,error:t.error_code,plan:t.plan?String(t.plan).slice(0,900):null}))},status_facts:chatStatusFacts(store,now),goals:planningSnapshot(store).goals,observed_at:new Date(now).toISOString(),operator:store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get(),autonomy:autonomyStatus(store,now),jobs:store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all(),discovery:store.db.prepare('SELECT checked_at,completed_at,error_code FROM social_scan WHERE id=1').get(),reflections:store.db.prepare('SELECT started_at,status,error_code FROM kestrel_reflections ORDER BY started_at DESC LIMIT 3').all()};
-  const history=store.db.prepare("SELECT body,response FROM kestrel_chat WHERE status='ANSWERED' AND created_at<=? AND id<>? ORDER BY rowid DESC LIMIT 6").all(row.created_at,row.id).reverse().map(r=>({Admin:String(r.body).slice(0,500),Kestrel:String(r.response).slice(0,600)}));
-  const memory=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 3").all();
-  recordPrivateIncidents(store,now);
-  const context={conversations:conversationContext(store,String(row.body)),private_incidents:store.db.prepare('SELECT source,code,observation FROM kestrel_incidents ORDER BY created_at DESC LIMIT 3').all(),live_state:state,fallible_memory:memory,history,message:{sender:'Admin',body:row.body}};
-  let input=JSON.stringify(context);while(input.length>12000&&context.history.length){context.history.shift();input=JSON.stringify(context);}while(input.length>12000&&context.fallible_memory.length){context.fallible_memory.pop();input=JSON.stringify(context);}while(input.length>12000&&context.conversations.length){context.conversations.pop();input=JSON.stringify(context);}if(input.length>12000)throw Error('chat_context_too_large');
+  const context=buildChatContext(store,String(row.body),String(row.id),Number(row.created_at),now);
+  const input=JSON.stringify(context);
   const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'admin-chat',input);
   if(!result.text.trim()||result.text.length>6000)throw Error('invalid_chat_response');
   store.db.prepare("UPDATE kestrel_chat SET status='ANSWERED',response=?,finished_at=? WHERE id=? AND status='PROCESSING'").run(result.text,Date.now(),row.id);return true;
