@@ -16,7 +16,7 @@ test('automatic verification reserves once, confirms matching content and expire
  try{
  writeFileSync(path,JSON.stringify({name:'KestrelField',api_key:'secret'}));store.setOperator(true,'ollama','test',50);store.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();
  store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('post','Title','body','Other','general',?)").run(now);
- store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,comment_id,challenge,verification_code,expires_at) VALUES('reply','post','text','PENDING_VERIFICATION','comment','obfuscated','secret',?)").run(new Date(now+300000).toISOString());
+ store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,comment_id,challenge,verification_code,expires_at) VALUES('reply','post','text','PENDING_VERIFICATION','comment','Twenty five plus seven','secret',?)").run(new Date(now+300000).toISOString());
  let calls=0,writes=0;
  const gen=async()=>{calls++;return {text:'{"a":25,"b":7,"op":"+"}',provider:'ollama',model:'test'};};
  const fake=async(_url:any,opts:any)=>{writes++;assert.equal(JSON.parse(opts.body).answer,'32.00');return new Response(JSON.stringify({success:true,content_id:'comment'}));};
@@ -27,7 +27,7 @@ test('automatic verification reserves once, confirms matching content and expire
 });
 test('ambiguous solver output never guesses, retries or publishes',async()=>{
  const dir=mkdtempSync(tmpdir()+'/verify-'),s=openStore(dir),now=Date.now();try{
- s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,challenge,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','unknown',?)").run(new Date(now+300000).toISOString());let calls=0;
+ s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,challenge,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','Twenty five plus seven',?)").run(new Date(now+300000).toISOString());let calls=0;
  const gen=async()=>{calls++;return {text:'null',provider:'ollama',model:'test'};};const fake=async()=>{throw Error('must not send');};await processChallenges(s,'unused',fake as typeof fetch,now,gen);await processChallenges(s,'unused',fake as typeof fetch,now,gen);assert.equal(calls,1);assert.equal(s.db.prepare('SELECT status FROM social_replies').get()?.status,'PENDING_VERIFICATION');
  }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
 });
@@ -42,7 +42,7 @@ test('verification rejection diagnostics whitelist reasons and discard echoed se
 });
 test('failed automatic answer retains numeric diagnostics but no verification credentials',async()=>{
  const dir=mkdtempSync(tmpdir()+'/verify-'),s=openStore(dir+'/data'),path=dir+'/identity',now=Date.now();try{
- writeFileSync(path,JSON.stringify({name:'KestrelField',api_key:'private-api-key'}));s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,comment_id,challenge,verification_code,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','c','challenge','private-verification-code',?)").run(new Date(now+300000).toISOString());
+ writeFileSync(path,JSON.stringify({name:'KestrelField',api_key:'private-api-key'}));s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,comment_id,challenge,verification_code,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','c','Twenty five minus seven','private-verification-code',?)").run(new Date(now+300000).toISOString());
  const gen=async()=>({text:'{"a":25,"b":7,"op":"-"}',provider:'ollama',model:'test'});let sends=0;const fake=async()=>{sends++;return new Response(JSON.stringify({error:'Incorrect answer',hint:'private-api-key private-verification-code'}),{status:400});};
  await processChallenges(s,path,fake as typeof fetch,now,gen);await processChallenges(s,path,fake as typeof fetch,now,gen);
  const row=s.db.prepare('SELECT * FROM social_verification_attempts').get()!;assert.equal(row.equation,'25 - 7');assert.equal(row.answer,'18.00');assert.equal(row.http_status,400);assert.equal(row.response_reason,'incorrect_answer');assert.equal(row.status,'VERIFICATION_FAILED');assert.ok(row.finished_at);assert.equal(sends,1);assert.equal(JSON.stringify(row).includes('private-'),false);
@@ -53,9 +53,33 @@ test('fourth challenge call is allowed but fifth is blocked by persistent rollin
  store.setOperator(true,'ollama','test',50);store.db.prepare('UPDATE social_autonomy SET enabled=1 WHERE id=1').run();
  store.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);
  for(let i=0;i<3;i++)store.db.prepare("INSERT INTO social_verification_attempts(target,started_at,status) VALUES(?,?,'NEEDS_REVIEW')").run('previous:'+i,now-1000);
- const insert=(id:string)=>store.db.prepare("INSERT INTO social_replies(id,post_id,parent_id,body,status,challenge,expires_at) VALUES(?,?,?,?,'PENDING_VERIFICATION','unknown',?)").run(id,'p',id,'text',new Date(now+300000).toISOString());
+ const insert=(id:string)=>store.db.prepare("INSERT INTO social_replies(id,post_id,parent_id,body,status,challenge,expires_at) VALUES(?,?,?,?,'PENDING_VERIFICATION','Twenty five plus seven',?)").run(id,'p',id,'text',new Date(now+300000).toISOString());
  insert('fourth');let calls=0;const gen=async()=>{calls++;return {text:'ambiguous',provider:'ollama',model:'test'};};const network=async()=>{throw Error('No external writes allowed');};
  await processChallenges(store,dir+'/missing.json',network as typeof fetch,now,gen);assert.equal(calls,1);
  insert('fifth');await processChallenges(store,dir+'/missing.json',network as typeof fetch,now+1,gen);assert.equal(calls,1);assert.equal(store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts').get()?.n,4);
  }finally{store.db.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('source grounding preserves compound quantities and rejects invented operators',async()=>{
+ const {groundedChallenge,challengeSourceFacts}=await import('../src/social-verification.ts');
+ const source='A lobster has THIR/TY FiVe newtons and gains THREE newtons. What is the combined force?';
+ assert.equal(groundedChallenge('{"a":35,"b":3,"op":"+"}',source).answer,'38.00');
+ assert.throws(()=>groundedChallenge('{"a":5,"b":3,"op":"/"}',source),/challenge_operand_mismatch/);
+ assert.throws(()=>groundedChallenge('{"a":35,"b":3,"op":"/"}',source),/challenge_operation_mismatch/);
+ assert.equal(groundedChallenge('{"a":24,"b":6,"op":"-"}','Force is twenty four and decreases by six.').answer,'18.00');
+ assert.throws(()=>challengeSourceFacts('Thwenty five plus seven.'),/challenge_ambiguous/);
+ assert.throws(()=>challengeSourceFacts('Someone has twenty four against six.'),/challenge_ambiguous/);
+ assert.throws(()=>challengeSourceFacts('Twenty four and six. What happens?'),/challenge_ambiguous/);
+ assert.throws(()=>challengeSourceFacts('Twenty four plus six minus two.'),/challenge_ambiguous/);
+});
+test('a source-mismatched solver answer is deferred privately without any verification POST',async()=>{
+ const dir=mkdtempSync(tmpdir()+'/verify-grounded-'),s=openStore(dir),now=Date.now();try{
+ s.setOperator(true,'ollama','test',50);s.db.prepare('UPDATE social_autonomy SET enabled=1').run();
+ s.db.prepare("INSERT INTO social_discussions(id,title,body,author,community,seen_at) VALUES('p','t','b','a','g',?)").run(now);
+ s.db.prepare("INSERT INTO social_replies(id,post_id,body,status,challenge,expires_at) VALUES('r','p','b','PENDING_VERIFICATION','Thirty five plus three',?)").run(new Date(now+300000).toISOString());
+ let calls=0,sends=0;const gen:any=async()=>{calls++;return {text:'{"a":5,"b":3,"op":"/"}'};};const network:any=async()=>{sends++;throw Error('must not send');};
+ await processChallenges(s,'unused',network,now,gen);await processChallenges(s,'unused',network,now,gen);
+ assert.equal(calls,1);assert.equal(sends,0);assert.equal(s.db.prepare('SELECT error_code FROM social_verification_attempts').get()?.error_code,'challenge_operand_mismatch');
+ assert.equal(s.db.prepare('SELECT status FROM social_replies').get()?.status,'PENDING_VERIFICATION');
+ }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
 });

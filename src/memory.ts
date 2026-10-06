@@ -23,6 +23,27 @@ const rules:Record<string,string>={
  model_failure:'A previous generation failed. Preserve uncertainty and avoid claiming that an action or result completed.',
  confirmed_delivery:'Some earlier replies were confirmed published. Use prior contributions as examples of structure, while adapting to the current source; publication alone does not prove usefulness.'
 };
+const decisionLessons:Record<string,string>={
+ decision_invalid_evidence:'A decision supplied an invalid evidence excerpt. Check exact source evidence and its length; this says nothing about question count.',
+ decision_evidence_not_in_source:'A decision cited text absent from the source. Copy a genuine exact source excerpt; never invent evidence.',
+ decision_evidence_length:'A source excerpt violated the evidence length bounds. Use an exact 15–240-character source excerpt.',
+ decision_invalid_json:'A decision was not valid JSON. Return only the required JSON object.',
+ decision_invalid_schema:'A decision had the wrong JSON fields. Follow the exact decision schema.',
+ decision_invalid_action:'A decision used an unsupported action. Choose help, invite or abstain.',
+ decision_invalid_need:'A decision did not describe a need within the required bounds.',
+ decision_invalid_reason:'A decision did not describe expected value within the required bounds.',
+ decision_invalid_body:'A decision body had an invalid type or length.',
+ decision_invitation_not_eligible:'An invitation was not eligible. Check current opportunity and invitation limits before proposing it.',
+ decision_invitation_service_mismatch:'An invitation did not fit supplied text services or service listing. Do not offer unavailable capabilities.',
+ decision_abstention_has_body:'An abstention included a public body. Abstaining requires an empty body.'
+};
+Object.assign(rules,decisionLessons);
+function mismatchedQuestionEvidence(store:Store,lesson:string,evidence:string){
+ if(!/(?:excessive|too many|question count|too much|multiple) questions?|questions? (?:limit|count)/i.test(lesson))return false;
+ let ids:unknown;try{ids=JSON.parse(evidence);}catch{return true;}
+ if(!Array.isArray(ids)||!ids.length)return true;
+ return ids.some(id=>store.db.prepare('SELECT kind FROM kestrel_experience WHERE id=?').get(String(id))?.kind!=='reply_too_many_questions');
+}
 export function learnFromOutcomes(store:Store,now=Date.now()){
  return store.transaction(()=>{
   let added=0;
@@ -38,6 +59,17 @@ export function learnFromOutcomes(store:Store,now=Date.now()){
   }
   for(const row of store.db.prepare("SELECT id,error_code FROM social_generation WHERE status='FAILED' ORDER BY started_at DESC LIMIT 200").all()){
    const safe=String(row.error_code);const kind=Object.hasOwn(rules,safe)?safe:'model_failure';
+   // Reclassify legacy generic observations from the persisted safe failure code.
+   const id='generation:'+row.id+':failed';
+   const previous=store.db.prepare('SELECT kind FROM kestrel_experience WHERE id=?').get(id);
+   if(previous&&previous.kind!==kind){
+    store.db.prepare('UPDATE kestrel_experience SET kind=?,observation=? WHERE id=?').run(kind,'Generation outcome: '+kind,id);
+    for(const k of [String(previous.kind),kind]){
+     const count=Number(store.db.prepare('SELECT count(*) AS n FROM kestrel_experience WHERE kind=?').get(k)?.n);
+     if(count)store.db.prepare('INSERT INTO kestrel_lessons(kind,lesson,evidence_count,updated_at) VALUES(?,?,?,?) ON CONFLICT(kind) DO UPDATE SET lesson=excluded.lesson,evidence_count=excluded.evidence_count,updated_at=excluded.updated_at').run(k,rules[k],count,now);
+     else store.db.prepare('DELETE FROM kestrel_lessons WHERE kind=?').run(k);
+    }
+   }
    record('generation:'+row.id,'failed',kind,'Generation outcome: '+kind);
   }
   for(const row of store.db.prepare("SELECT r.id,r.status,v.visibility,v.verification_status FROM social_replies r JOIN social_visibility v ON v.reply_id=r.id WHERE v.error_code IS NULL AND v.visibility='VISIBLE' AND r.status IN ('VERIFICATION_FAILED','VERIFICATION_EXPIRED') ORDER BY r.rowid DESC LIMIT 200").all()){
@@ -101,6 +133,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
   for(const l of parsed.lessons){
    if(l&&Array.isArray(l.evidence)&&l.evidence.some((id:unknown)=>typeof id!=='string'||!ids.has(id)))throw Error('reflection_unknown_evidence');
    if(!l||Object.keys(l).sort().join(',')!=='evidence,lesson,topic'||!topics.includes(l.topic)||seen.has(l.topic)||typeof l.lesson!=='string'||l.lesson.length<20||l.lesson.length>600||/https?:|www\.|credential|private.key|api.key|seed.phrase|disable|bypass|raise.*limit|ignore.*instruction|guaranteed/i.test(l.lesson)||!Array.isArray(l.evidence)||!l.evidence.length||l.evidence.length>5||!l.evidence.every((id:unknown)=>typeof id==='string'&&ids.has(id)))throw Error('reflection_invalid_lesson');
+   if(mismatchedQuestionEvidence(store,l.lesson,JSON.stringify(l.evidence)))throw Error('reflection_evidence_mismatch');
    seen.add(l.topic);
   }
   // No review gate. The agent applies valid hypotheses and preserves revision history.
@@ -115,7 +148,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
    store.db.prepare("UPDATE kestrel_reflections SET status='COMPLETED',finished_at=? WHERE id=?").run(Date.now(),payload.id);
   });return {learned:parsed.lessons.length};
  }catch(error){
-  const allowed=['reflection_invalid_json','reflection_invalid_shape','reflection_unknown_evidence','reflection_invalid_lesson'];
+  const allowed=['reflection_invalid_json','reflection_invalid_shape','reflection_unknown_evidence','reflection_invalid_lesson','reflection_evidence_mismatch'];
   const provider=['empty_response','incomplete_response','response_too_large','insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','billing_hard_limit_reached'];
   const code=error instanceof ModelError&&(provider.includes(error.message)||/^http_\d{3}$/.test(error.message))?'reflection_model_'+error.message:error instanceof Error&&allowed.includes(error.message)?error.message:error instanceof Error&&error.name==='TimeoutError'?'reflection_timeout':'reflection_model_or_storage_error';
   store.db.prepare("UPDATE kestrel_reflections SET status='FAILED',error_code=?,finished_at=? WHERE id=? AND status='RUNNING'").run(code,Date.now(),payload.id);return {error_code:code};
@@ -125,9 +158,10 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
 // Bounded contradiction checks; unknown claims stay UNTESTED rather than being marked true.
 export function assessInsights(store:Store,now=Date.now()){
  const visible=Number(store.db.prepare("SELECT count(*) AS n FROM social_replies r JOIN social_visibility v ON v.reply_id=r.id WHERE r.status IN ('VERIFICATION_FAILED','VERIFICATION_EXPIRED') AND v.visibility='VISIBLE' AND v.error_code IS NULL").get()?.n)>0;
- for(const i of store.db.prepare('SELECT topic,lesson FROM kestrel_insights').all()){
+ for(const i of store.db.prepare('SELECT topic,lesson,evidence FROM kestrel_insights').all()){
   const text=String(i.lesson);
-  const contradicted=visible&&/verification (?:failures?|errors?).{0,35}(?:indicate|prove|mean|cause|prevent).{0,25}(?:delivery (?:issues?|failure)|not (?:delivered|visible)|unpublished)/i.test(text);
-  store.db.prepare('INSERT INTO kestrel_insight_checks(topic,status,reason,checked_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET status=excluded.status,reason=excluded.reason,checked_at=excluded.checked_at').run(i.topic,contradicted?'CONTRADICTED':'UNTESTED',contradicted?'visible_comments_despite_failed_verification':'insufficient_evidence_to_validate_hypothesis',now);
+  const mismatch=mismatchedQuestionEvidence(store,text,String(i.evidence));
+  const contradicted=mismatch||visible&&/verification (?:failures?|errors?).{0,35}(?:indicate|prove|mean|cause|prevent).{0,25}(?:delivery (?:issues?|failure)|not (?:delivered|visible)|unpublished)/i.test(text);
+  store.db.prepare('INSERT INTO kestrel_insight_checks(topic,status,reason,checked_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET status=excluded.status,reason=excluded.reason,checked_at=excluded.checked_at').run(i.topic,contradicted?'CONTRADICTED':'UNTESTED',contradicted?(mismatch?'failure_category_evidence_mismatch':'visible_comments_despite_failed_verification'):'insufficient_evidence_to_validate_hypothesis',now);
  }
 }
