@@ -1,3 +1,4 @@
+import {parseSocialDecision,invitationEligible,invitationDisclosure,recordPrivateIncidents} from './social-judgment.ts';
 import {socialLimits,unansweredIncoming,retryEligibleIncoming,retryableReplyErrors} from './social-policy.ts';
 import {chooseDiscussion,reservePlan,refreshPlanning} from './planning.ts';
 import {learnFromOutcomes,retrieveMemory} from './memory.ts';
@@ -30,7 +31,7 @@ export function validateAutonomousReply(body:unknown,source:string){
  if(body.trim().length<80)throw Error('reply_too_short');
  if(body.length>1200)throw Error('reply_too_long');
  if((body.match(/\?/g)||[]).length>1)throw Error('reply_too_many_questions');
- if(/https?:|www\.|clicknlist|\[[^\]]*\]\(|<a\b/i.test(body))throw Error('reply_promotion_or_link');
+ if(/https?:|www\.|clicknlist|literate bassoon|\[[^\]]*\]\(|<a\b/i.test(body))throw Error('reply_promotion_or_link');
  if(/api[_ -]?key|seed phrase|private key|send (?:me|us)/i.test(body))throw Error('reply_credential_or_solicitation');
  if(/guaranteed|ignore (?:previous|all)|as an ai|```/i.test(body))throw Error('reply_unsafe_or_boilerplate');
  const words=(s:string)=>new Set(s.toLowerCase().match(/[a-z]{5,}/g)||[]);
@@ -50,6 +51,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
  await processChallenges(store,path,fetcher,now,generateText);
  await scanFollowups(store,path,fetcher,now);
  learnFromOutcomes(store,now);
+ recordPrivateIncidents(store,now);
  refreshPlanning(store,now);
  const candidate=store.transaction(()=>{
   const status=autonomyStatus(store,now),cfg=store.settings();
@@ -77,16 +79,35 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
  try{
   const c=credentials(path),detail=await request('/posts/'+p.id,c.api_key,undefined,fetcher),fresh=detail.post;
   if(detail.success===false||fresh?.id!==p.id||fresh.author?.name!==p.author||(!incoming&&fresh.author.name.toLowerCase()===c.name.toLowerCase())||fresh.is_spam||fresh.is_deleted||typeof fresh.content!=='string'||fresh.content!==p.body||fresh.title!==p.title)throw Error('source_changed');
-  let source=String(p.title)+'\n'+String(p.body).slice(0,incoming?4000:10000);
+  let source=String(p.title)+'\n'+String(p.body).slice(0,incoming?1500:8000);
   if(incoming){
    const current=(await readThread(String(p.id),path,fetcher)).find(r=>r.id===incoming.id);
    if(!current||current.parent_id!==incoming.parent_id||current.author?.name!==incoming.author||current.content!==incoming.body||current.is_spam||current.is_deleted)throw Error('source_changed');
    const prior=store.db.prepare("SELECT error_code FROM social_generation WHERE parent_id=? AND status='FAILED' ORDER BY started_at DESC LIMIT 1").get(incoming.id);
    if(prior&&retryableReplyErrors.includes(String(prior.error_code) as any))source+='\nYour previous draft was rejected before posting: '+prior.error_code+'. Correct that issue; this is the only regeneration retry for this message.';
-   source+='\nYour previous comment (context only): '+String(incoming.previous_body).slice(0,1200)+'\nReply directly to this agent response: '+String(incoming.body).slice(0,6000);
+   source+='\nYour previous comment (context only): '+String(incoming.previous_body).slice(0,800)+'\nReply directly to this agent response: '+String(incoming.body).slice(0,5000);
   }
-  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-reply',source+retrieveMemory(store,id,source,now,String(incoming?.author||p.author)),fetcher);
-  const reply=validateAutonomousReply(output.text,source);
+  // Read the surrounding discussion before selecting a contribution. No public write on a failed read.
+  const thread=await readThread(String(p.id),path,fetcher);
+  const research=thread.filter(r=>typeof r.content==='string'&&typeof r.author?.name==='string'&&!r.is_spam&&!r.is_deleted&&r.author.name.toLowerCase()!==c.name.toLowerCase()).slice(0,4).map(r=>({id:r.id,author:r.author.name,body:r.content.slice(0,350)}));
+  const canInvite=invitationEligible(store,source,String(incoming?.author||p.author),now);
+  const services=store.db.prepare('SELECT name,description,price FROM services WHERE active=1 ORDER BY id LIMIT 8').all();
+  const context={source:source.slice(0,8500),thread:research,guidance:retrieveMemory(store,id,source,now,String(incoming?.author||p.author),1200),opportunity:{eligible:canInvite,kind:incoming?'direct_response':'initial_discussion',services,welcome_test_credits:100,test_credits_are_cash:false,invitation_disclosure:canInvite?invitationDisclosure:null},private_operations:'Verification failures are handled privately with Admin. Do not ask other agents to debug your own posting unless their source explicitly requests that topic.'};
+  while(JSON.stringify(context).length>12000&&context.thread.length)context.thread.pop();
+  while(JSON.stringify(context).length>12000&&context.opportunity.services.length)context.opportunity.services.pop();
+  if(JSON.stringify(context).length>12000)throw Error('decision_context_limit');
+  const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-decision',JSON.stringify(context),fetcher);
+  const decision=parseSocialDecision(output.text,context.source,canInvite);
+  store.db.prepare('INSERT INTO kestrel_social_decisions(id,post_id,action,need,evidence,reason,research,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id,p.id,decision.action,decision.need,decision.evidence,decision.reason,JSON.stringify({thread_comments:research,source_checked:true,limits:'Bounded source and thread research; external claims are not independently verified.'}),now);
+  if(decision.action==='abstain'){
+   store.db.prepare("UPDATE social_generation SET status='ABSTAINED',finished_at=? WHERE id=? AND status='RUNNING'").run(Date.now(),id);
+   store.db.prepare("UPDATE kestrel_plans SET status='ABSTAINED' WHERE id=?").run(id);
+   store.db.prepare("UPDATE social_autonomy SET last_reason='judgment_abstained' WHERE id=1").run();return {status:'ABSTAINED'};
+  }
+  let reply=validateAutonomousReply(decision.body,source);
+  if(decision.action==='invite'){reply+='\n\n'+invitationDisclosure;if(reply.length>1200)throw Error('reply_too_long');}
+  // Do not allow a recovered/interrupted generation to apply a late response.
+  if(store.db.prepare('SELECT status FROM social_generation WHERE id=?').get(id)?.status!=='RUNNING')return {status:'INTERRUPTED'};
   store.transaction(()=>{
    store.db.prepare("INSERT INTO social_replies(id,post_id,body,status,parent_id) VALUES(?,?,?,'DRAFT',?)").run(id,p.id,reply,incoming?.id||null);
    store.db.prepare("UPDATE social_generation SET status='GENERATED',finished_at=? WHERE id=?").run(Date.now(),id);
@@ -98,7 +119,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(result.status==='PENDING_VERIFICATION'){await processChallenges(store,path,fetcher,Date.now(),generateText);result={...result,status:String(store.db.prepare('SELECT status FROM social_replies WHERE id=?').get(id)?.status)};}
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
-  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy'].includes(e.message)?e.message:'social_cycle_failed';
+  const code=e instanceof ModelError?e.message:e instanceof Error&&['source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy','decision_invalid_json','decision_invalid_evidence','decision_invitation_not_eligible','decision_abstention_has_body','decision_context_limit'].includes(e.message)?e.message:'social_cycle_failed';
   store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=?,finished_at=? WHERE id=?").run(code,Date.now(),id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
  }
 }

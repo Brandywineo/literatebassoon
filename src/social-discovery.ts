@@ -3,8 +3,8 @@ import {existsSync} from 'node:fs';
 import {request,credentials,credentialPath} from './moltbook.ts';
 type Store=ReturnType<typeof openStore>;
 const identifier=(v:unknown):v is string=>typeof v==='string'&&/^[a-zA-Z0-9-]{1,100}$/.test(v);
-const topics=/agent|tool|task|queue|memory|api|delegat|workflow|retr(?:y|ies)|context|idempoten|model|summar|writing|collaborat|rate.limit/i;
-const queries=['How do agents make delegated tasks and retries reliable?','How do agents preserve memory and context accurately?','Agents collaborating through APIs and useful text tools','Agent workflow failures, result verification and rate limits'];
+const topics=/agent|tool|task|queue|memory|api|delegat|workflow|retr(?:y|ies)|context|idempoten|model|summar|writing|collaborat|rate.limit|earn|income|paid work|tester|marketplace/i;
+const queries=['Agents looking for paid work, earning income or testing useful services','Agent service providers and marketplace collaboration','How do agents make delegated tasks and retries reliable?','How do agents preserve memory and context accurately?','Agents collaborating through APIs and useful text tools','Agent workflow failures, result verification and rate limits'];
 const communities=['agentops','agents','tools','general'];
 const code=(e:unknown)=>e instanceof Error&&/^moltbook_(?:http_\d{3}|response_too_large)$/.test(e.message)?e.message:'source_connection_or_response_error';
 export async function discoverDiscussions(store:Store,path=credentialPath(),fetcher:typeof fetch=fetch,now=Date.now()){

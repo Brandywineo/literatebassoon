@@ -17,7 +17,9 @@ async function load(){const activeKey=key,data=await api('overview');if(key!==ac
  table('#core-tools',['Tool','Effect','Purpose'],(core.tools||[]).map(t=>[t.id,t.effect,t.description]));
  table('#core-tasks',['Started (EAT)','Status','Project','Plan / proposal','Observed evidence','Failure'],(core.tasks||[]).map(t=>[adminTime(t.started_at),t.status,t.project_id,t.plan,t.evidence,t.error_code]));
  renderChat(data.chat||[]);
- const planning=data.planning||{};$('#planning-waiting').textContent='Current cycle: '+(planning.waiting?.last_reason||'waiting').replaceAll('_',' ');
+ const planning=data.planning||{};
+ table('#social-decisions',['Time','Source','Action','Need','Source evidence','Expected value','Research'],(planning.decisions||[]).map(d=>[adminTime(d.created_at),d.post_id,d.action,d.need,d.evidence,d.reason,d.research]));
+ table('#private-incidents',['Time','Source','Code','Observation'],(planning.incidents||[]).map(i=>[adminTime(i.created_at),i.source,i.code,i.observation]));$('#planning-waiting').textContent='Current cycle: '+(planning.waiting?.last_reason||'waiting').replaceAll('_',' ');
  table('#planning-goals',['Objective','Observed metrics','Checked'],(planning.goals||[]).map(g=>[g.objective,g.metrics,g.checked_at?adminTime(g.checked_at):'Waiting']));
  table('#planning-actions',['Goal','Source','Selection reason','Score','Execution','Visibility','Failure'],(planning.plans||[]).map(p=>[p.goal_id,p.post_id,p.reason,p.score,p.status,p.visibility||'not observed',p.error_code]));
  const monitor=data.monitor?JSON.parse(data.monitor.snapshot):null;$('#monitor-age').textContent=monitor?'Last check: '+Math.round((Date.now()-monitor.checked_at)/1000)+'s ago · last 24 hours':'Waiting for the worker’s first monitoring check.';

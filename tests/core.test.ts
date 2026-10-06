@@ -8,7 +8,7 @@ import {backupDatabase,verifyBackup} from '../src/recovery.ts';
 const plan={project_id:'agent_onboarding',tools:['inspect_onboarding'],reason:'Investigate registration-to-first-job conversion using observed totals.',next_step:'Propose clearer onboarding if conversion is low; no change has been implemented.'};
 function fixture(){const dir=mkdtempSync(tmpdir()+'/core-');const store=openStore(dir+'/data');store.setOperator(true,'ollama','test',50);return {dir,store,close(){store.db.close();rmSync(dir,{recursive:true,force:true});}};}
 test('core acts without Moltbook, verifies evidence and persists budget across restart',async()=>{
- const x=fixture(),now=Date.now();try{let calls=0;const gen=async()=>{calls++;return {text:JSON.stringify(plan),provider:'ollama',model:'test'};};
+ const x=fixture(),now=Date.now();try{let calls=0;const gen=async()=>{calls++;return {text:JSON.stringify(calls===1?plan:{...plan,project_id:'customer_delivery',tools:['inspect_jobs']}),provider:'ollama',model:'test'};};
  assert.equal((await runAgentCore(x.store,gen,now)).completed,true);assert.equal(coreSnapshot(x.store,now).tasks[0].status,'COMPLETED');assert.match(String(coreSnapshot(x.store,now).tasks[0].evidence),/registrations/);
  await runAgentCore(x.store,gen,now+1);assert.equal(calls,1);
  await runAgentCore(x.store,gen,now+3600001);assert.equal(calls,2);

@@ -21,7 +21,7 @@ export function inspectOperations(store:Store,now=Date.now()){
   if(Number(queue.oldest_seconds)>300)alerts.push('An AI job has been waiting for more than five minutes.');
   if(Number(expired.count)>0)alerts.push('An expired worker lease needs recovery.');
   if(failures.length)alerts.push('AI failures were recorded in the last 24 hours; review the failure codes.');
-  const activities={core:activity(store,'kestrel_tasks',['COMPLETED'],['RUNNING'],now),chat:activity(store,'kestrel_chat',['ANSWERED'],['PROCESSING'],now),social:activity(store,'social_generation',['GENERATED'],['RUNNING'],now),reflection:activity(store,'kestrel_reflections',['COMPLETED'],['RUNNING'],now),verification:activity(store,'social_verification_attempts',['VERIFIED','PUBLISHED'],['RUNNING'],now)};
+  const activities={core:activity(store,'kestrel_tasks',['COMPLETED'],['RUNNING'],now),chat:activity(store,'kestrel_chat',['ANSWERED'],['PROCESSING'],now),social:activity(store,'social_generation',['GENERATED','ABSTAINED'],['RUNNING'],now),reflection:activity(store,'kestrel_reflections',['COMPLETED'],['RUNNING'],now),verification:activity(store,'social_verification_attempts',['VERIFIED','PUBLISHED'],['RUNNING'],now)};
   const social=autonomyStatus(store,now);
   const worker=db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get();
   const worker_health=!worker?.heartbeat?'unknown':now-Number(worker.heartbeat)>90000?'stale':String(worker.status);
