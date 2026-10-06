@@ -1,3 +1,4 @@
+import {assertModerationAllowsWrite} from './social-observations.ts';
 import {MoltbookVerificationError,verificationReason,recordVerificationResponse} from './verification-diagnostics.ts';
 import {challengeDeadline} from './social-verification.ts';
 import {pathToFileURL} from 'node:url';
@@ -21,6 +22,7 @@ export async function publishDraft(store:Store,id:string,title:string,submolt='g
  const state=await request('/agents/status',c.api_key,undefined,fetcher);if(state.status!=='claimed')throw Error('Moltbook identity must be claimed');
  // Reserve before sending. Never resend an attempt whose network outcome is unknown.
  store.transaction(()=>{
+  assertModerationAllowsWrite(store,String(draft.body),now);
   if(store.db.prepare("SELECT status FROM outreach_drafts WHERE id=?").get(id)?.status!=='APPROVED')throw Error('An approved draft is required');
   if(store.db.prepare('SELECT draft_id FROM moltbook_publications WHERE draft_id=? OR content_hash=?').get(id,hash(String(draft.body))))throw Error('This content already has a publishing attempt');
   const last=store.db.prepare('SELECT max(attempted_at) AS at FROM moltbook_publications').get();

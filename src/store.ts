@@ -12,6 +12,10 @@ export function openStore(dir: string) {
     CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY, provider_id TEXT REFERENCES agents(id), name TEXT NOT NULL, description TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL CHECK(price>=0), builtin TEXT, active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, buyer_id TEXT NOT NULL REFERENCES agents(id), service_id TEXT NOT NULL REFERENCES services(id), status TEXT NOT NULL, input TEXT NOT NULL, result TEXT, price INTEGER NOT NULL, fee INTEGER NOT NULL, idempotency_key TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, UNIQUE(buyer_id,idempotency_key));
     CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY, agent_id TEXT REFERENCES agents(id), job_id TEXT REFERENCES jobs(id), amount INTEGER NOT NULL, kind TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS social_observations(target TEXT NOT NULL,surface TEXT NOT NULL,moderation TEXT NOT NULL,visibility TEXT NOT NULL,verification_status TEXT,checked_at INTEGER NOT NULL,first_spam_at INTEGER,PRIMARY KEY(target,surface));
+    CREATE TABLE IF NOT EXISTS social_observation_history(id INTEGER PRIMARY KEY,target TEXT NOT NULL,surface TEXT NOT NULL,moderation TEXT NOT NULL,visibility TEXT NOT NULL,verification_status TEXT,observed_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS social_reconciliation(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT); INSERT OR IGNORE INTO social_reconciliation(id) VALUES(1);
+    CREATE TABLE IF NOT EXISTS social_profile_sync(id INTEGER PRIMARY KEY CHECK(id=1),checked_at INTEGER NOT NULL DEFAULT 0,confirmed_at INTEGER,description TEXT,error_code TEXT); INSERT OR IGNORE INTO social_profile_sync(id) VALUES(1);`);
   db.exec(`CREATE TABLE IF NOT EXISTS kestrel_guidance_usage(reply_id TEXT NOT NULL,type TEXT NOT NULL,key TEXT NOT NULL,version TEXT NOT NULL,guidance TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(reply_id,type,key));
     CREATE TABLE IF NOT EXISTS kestrel_relationship_events(id TEXT PRIMARY KEY,agent_key TEXT NOT NULL,agent_name TEXT NOT NULL,direction TEXT NOT NULL,post_id TEXT NOT NULL,body TEXT NOT NULL,observed_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS relationship_agent_time ON kestrel_relationship_events(agent_key,observed_at);
@@ -75,6 +79,8 @@ export function openStore(dir: string) {
       CREATE UNIQUE INDEX social_reply_parent ON social_replies(parent_id) WHERE parent_id IS NOT NULL;`);
   }
   db.exec(`CREATE TABLE IF NOT EXISTS social_visibility(reply_id TEXT PRIMARY KEY,visibility TEXT NOT NULL,checked_at INTEGER NOT NULL,last_visible_at INTEGER,verification_status TEXT,error_code TEXT);`);
+  db.exec("INSERT OR IGNORE INTO social_observations(target,surface,moderation,visibility,verification_status,checked_at,first_spam_at) SELECT 'reply:'||reply_id,'public_thread_api','SPAM','PRESENT',verification_status,checked_at,checked_at FROM social_visibility WHERE visibility='VISIBLE_RESTRICTED' AND error_code IS NULL");
+  db.exec("INSERT INTO social_observation_history(target,surface,moderation,visibility,verification_status,observed_at) SELECT target,surface,moderation,visibility,verification_status,first_spam_at FROM social_observations o WHERE first_spam_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM social_observation_history h WHERE h.target=o.target AND h.surface=o.surface AND h.moderation='SPAM')");
   column('social_generation','parent_id','TEXT');
   column('social_autonomy','last_cycle_at','INTEGER NOT NULL DEFAULT 0');
   column('social_autonomy','last_reason','TEXT');

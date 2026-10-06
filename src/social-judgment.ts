@@ -1,13 +1,15 @@
+import {moderationPolicy} from './social-observations.ts';
 import type {openStore} from './store.ts';
 import {classifyDiscussion} from './planning.ts';
 type Store=ReturnType<typeof openStore>;
 // A concise, inspectable decision record, not a claim to expose hidden reasoning.
-export function parseSocialDecision(text:string,source:string,canInvite:boolean){
+export function parseSocialDecision(text:string,source:string,canInvite:boolean,excerpts:{id:number;text:string}[]=[]){
  let d:any;try{d=JSON.parse(text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('decision_invalid_json');}
  if(!d||typeof d!=='object'||Array.isArray(d)||Object.keys(d).sort().join(',')!=='action,body,evidence,need,reason')throw Error('decision_invalid_schema');
  if(!['help','invite','abstain'].includes(d.action))throw Error('decision_invalid_action');
  if(typeof d.need!=='string'||d.need.length<10||d.need.length>400)throw Error('decision_invalid_need');
  if(typeof d.reason!=='string'||d.reason.length<10||d.reason.length>400)throw Error('decision_invalid_reason');
+ if(typeof d.evidence==='number'||(typeof d.evidence==='string'&&/^\d+$/.test(d.evidence))){const excerpt=excerpts.find(e=>e.id===Number(d.evidence));if(!excerpt)throw Error('decision_invalid_evidence');d.evidence=excerpt.text;}
  if(typeof d.evidence!=='string'||d.evidence.length<15||d.evidence.length>240)throw Error('decision_evidence_length');
  if(!source.includes(d.evidence))throw Error('decision_evidence_not_in_source');
  if(typeof d.body!=='string'||d.body.length>1200)throw Error('decision_invalid_body');
@@ -17,6 +19,7 @@ export function parseSocialDecision(text:string,source:string,canInvite:boolean)
  return d as {action:string;body:string;evidence:string;need:string;reason:string};
 }
 export function invitationEligible(store:Store,source:string,author:string,now:number){
+ if(!moderationPolicy(store,now).promotion_allowed)return false;
  const c=classifyDiscussion(source);
  if(!c.opportunity&&!c.demand)return false;
  if(store.db.prepare("SELECT id FROM kestrel_social_decisions WHERE action='invite' AND created_at>=? LIMIT 1").get(now-86400000))return false;
@@ -41,4 +44,11 @@ export function conversationContext(store:Store,message:string){
  const query=`SELECT r.id,r.post_id,d.author,d.title,d.body AS source_body,r.body,r.status,v.visibility,v.verification_status,g.id AS autonomous_generation FROM social_replies r JOIN social_discussions d ON d.id=r.post_id LEFT JOIN social_visibility v ON v.reply_id=r.id LEFT JOIN social_generation g ON g.id=r.id`;
  const rows=authors.length?store.db.prepare(query+` WHERE lower(d.author) IN (${authors.map(()=>'?').join(',')}) ORDER BY r.rowid DESC LIMIT 100`).all(...authors.map(a=>a.toLowerCase())):store.db.prepare(query+' ORDER BY r.rowid DESC LIMIT 100').all();
  return rows.map(r=>({...r,score:[...terms].filter(t=>(String(r.author)+' '+r.post_id+' '+r.title+' '+r.body).toLowerCase().includes(t)).length})).sort((a,b)=>b.score-a.score).slice(0,3).map(r=>({reply_id:r.id,post_id:r.post_id,author:r.author,title:r.title,source_excerpt:String(r.source_body).slice(0,600),our_reply:String(r.body).slice(0,900),origin:r.autonomous_generation?'AUTONOMOUS':'ADMIN_INITIATED',local_status:r.status,last_observed_visibility:r.visibility,verification:r.verification_status,incoming:store.db.prepare('SELECT author,body FROM social_incoming WHERE post_id=? ORDER BY seen_at DESC LIMIT 1').all(r.post_id).map(i=>({author:i.author,body:String(i.body).slice(0,500)}))}));
+}
+
+// These excerpts contain only the freshly confirmed other-agent source, never our own replies or guidance.
+export function sourceExcerpts(source:string){
+ const chunks=source.match(/[^.!?\n]+[.!?]?/g)||[];const texts:string[]=[];
+ for(const chunk of chunks){for(let offset=0;offset<chunk.length;offset+=220){const text=chunk.slice(offset,offset+220).trim();if(text.length>=15)texts.push(text);}}
+ return texts.slice(0,8).map((text,i)=>({id:i+1,text}));
 }

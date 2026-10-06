@@ -1,3 +1,4 @@
+import {recordObservation} from './social-observations.ts';
 import type {openStore} from './store.ts';
 import {request,credentials,credentialPath} from './moltbook.ts';
 type Store=ReturnType<typeof openStore>;
@@ -34,6 +35,7 @@ export function observeComment(store:Store,row:any,comments:any[],name:string,no
    verification=['pending','verified','failed'].includes(comment.verification_status)?comment.verification_status:null;
   }
  }
+ recordObservation(store,'reply:'+row.id,'public_thread_api',comment,Boolean(comment&&visibility!=='MISMATCH'),now);
  store.db.prepare(`INSERT INTO social_visibility(reply_id,visibility,checked_at,last_visible_at,verification_status,error_code) VALUES(?,?,?,?,?,?) ON CONFLICT(reply_id) DO UPDATE SET visibility=excluded.visibility,checked_at=excluded.checked_at,last_visible_at=COALESCE(excluded.last_visible_at,social_visibility.last_visible_at),verification_status=excluded.verification_status,error_code=excluded.error_code`).run(row.id,visibility,now,visibility==='VISIBLE'||visibility==='VISIBLE_RESTRICTED'?now:null,verification,error);
  return visibility==='VISIBLE';
 }
@@ -43,9 +45,11 @@ export async function scanFollowups(store:Store,path=credentialPath(),fetcher:ty
  let read=0,found=0;
  try{
   const own=store.db.prepare("SELECT id,post_id,parent_id,body,status,comment_id,attempted_at FROM social_replies WHERE comment_id IS NOT NULL AND attempted_at>=? ORDER BY attempted_at DESC LIMIT 30").all(now-7*86400000);
-  const posts=[...new Set(own.map(r=>String(r.post_id)))].slice(0,5),c=credentials(path);let failures=0;
+  const posts=[...new Set(own.map(r=>String(r.post_id)))].sort((a,b)=>{const last=(id:string)=>Number(store.db.prepare("SELECT max(checked_at) AS n FROM social_observations WHERE target IN (SELECT 'reply:'||id FROM social_replies WHERE post_id=?) AND surface='public_thread_api'").get(id)?.n||0);return last(a)-last(b);}).slice(0,5),c=credentials(path);let failures=0;
   for(const postId of posts){try{
    const comments=await readThread(postId,path,fetcher,true);read++;
+   // Owner reads may expose moderation metadata omitted by public surfaces. Never treat omission as clearance.
+   try{const owner=await readThread(postId,path,fetcher,false);for(const r of own.filter(r=>r.post_id===postId)){const item=owner.find(i=>i.id===r.comment_id);recordObservation(store,'reply:'+r.id,'owner_thread_api',item,Boolean(item&&item.author?.name?.toLowerCase()===c.name.toLowerCase()&&item.content===r.body&&(item.parent_id??null)===(r.parent_id??null)),now);}}catch{failures++;}
    const visible=own.filter(r=>r.post_id===postId&&observeComment(store,r,comments,c.name,now));
    for(const incoming of comments){
     const parent=visible.find(r=>r.comment_id===incoming.parent_id);

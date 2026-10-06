@@ -1,6 +1,6 @@
 export const socialLimits={reply_attempts:4,generation_attempts:6,verification_attempts:4,window_hours:24} as const;
 // Only a rejected draft with no reply record can get one new generation attempt.
 // Delivery uncertainty, provider failures and interrupted calls are never replayed here.
-export const retryableReplyErrors=['reply_too_many_questions','reply_too_short','reply_too_long','reply_not_grounded','reply_near_copy','reply_unsafe_or_boilerplate','reply_promotion_or_link'] as const;
+export const retryableReplyErrors=['reply_template_residue','reply_repeats_own_contribution','reply_repeats_thread_answer','reply_repeats_previous_question','reply_too_many_questions','reply_too_short','reply_too_long','reply_not_grounded','reply_near_copy','reply_unsafe_or_boilerplate','reply_promotion_or_link'] as const;
 export const unansweredIncoming=`NOT EXISTS(SELECT 1 FROM social_replies answered LEFT JOIN social_visibility av ON av.reply_id=answered.id WHERE answered.parent_id=i.id AND (answered.status='PUBLISHED' OR (av.visibility='VISIBLE' AND av.error_code IS NULL)))`;
 export const retryEligibleIncoming=`NOT EXISTS(SELECT 1 FROM social_replies sent WHERE sent.parent_id=i.id) AND (SELECT count(*) FROM social_generation g WHERE g.parent_id=i.id)<2 AND NOT EXISTS(SELECT 1 FROM social_generation g WHERE g.parent_id=i.id AND (g.status<>'FAILED' OR g.error_code IS NULL OR g.error_code NOT IN (${retryableReplyErrors.map(e=>"'"+e+"'").join(',')})))`;

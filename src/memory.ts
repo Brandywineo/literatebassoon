@@ -7,6 +7,11 @@ type Store=ReturnType<typeof openStore>;
 // Lessons are derived from observed outcomes, never from instructions in social content.
 // No additional model calls, and no ability to alter money, credentials or operating limits.
 const rules:Record<string,string>={
+ moltbook_spam_observed:'Moltbook marked content as spam; its cause is unknown. Publication or challenge verification does not imply moderation acceptance. Avoid promotion during the cooldown and contribute a new specific mechanism or abstain.',
+ reply_repeats_own_contribution:'A draft substantially repeated an earlier contribution. Build on the latest response with a new mechanism or abstain.',
+ reply_repeats_thread_answer:'A draft repeated an existing thread answer. Read what has already been answered and add a distinct contribution or abstain.',
+ reply_repeats_previous_question:'A draft repeated a previously asked question. Address the answer or unresolved constraint instead of repeating the question.',
+ reply_template_residue:'A draft contained template labels. Write natural, specific prose without Ask: or similar scaffold labels.',
  reply_near_copy:'A draft copied too much of the source. Address the central question with a new mechanism, tradeoff or limitation rather than repeating the discussion.',
  reply_too_many_questions:'A draft asked too many questions. Contribute a concrete suggestion first and ask at most one question.',
  reply_too_short:'A draft was too short. Provide a substantive, specific contribution within the reply length limits.',
@@ -25,7 +30,7 @@ const rules:Record<string,string>={
 };
 const decisionLessons:Record<string,string>={
  decision_invalid_evidence:'A decision supplied an invalid evidence excerpt. Check exact source evidence and its length; this says nothing about question count.',
- decision_evidence_not_in_source:'A decision cited text absent from the source. Copy a genuine exact source excerpt; never invent evidence.',
+ decision_evidence_not_in_source:'A decision cited text absent from the source. Select a supplied numbered source excerpt; never invent evidence.',
  decision_evidence_length:'A source excerpt violated the evidence length bounds. Use an exact 15–240-character source excerpt.',
  decision_invalid_json:'A decision was not valid JSON. Return only the required JSON object.',
  decision_invalid_schema:'A decision had the wrong JSON fields. Follow the exact decision schema.',
@@ -75,6 +80,7 @@ export function learnFromOutcomes(store:Store,now=Date.now()){
   for(const row of store.db.prepare("SELECT r.id,r.status,v.visibility,v.verification_status FROM social_replies r JOIN social_visibility v ON v.reply_id=r.id WHERE v.error_code IS NULL AND v.visibility='VISIBLE' AND r.status IN ('VERIFICATION_FAILED','VERIFICATION_EXPIRED') ORDER BY r.rowid DESC LIMIT 200").all()){
    record('visibility:'+row.id,String(row.status)+':VISIBLE','visible_after_verification_failure','Comment publicly observed VISIBLE while local verification outcome is '+row.status+'. Delivery and verification are separate observations.');
   }
+  for(const r of store.db.prepare("SELECT target,min(first_spam_at) AS observed_at FROM social_observations WHERE first_spam_at IS NOT NULL GROUP BY target").all())record(String(r.target),'moderation:SPAM','moltbook_spam_observed','Moltbook explicitly flagged this content as spam. Cause unknown; verification and delivery are independent.');
   syncRelationships(store,now);
   assessInsights(store,now);
   // A successful later verification supersedes the interpretation of that specific event,
@@ -87,10 +93,10 @@ const words=(s:string)=>new Set((s.toLowerCase().match(/[a-z]{5,}/g)||[]).slice(
 export function retrieveMemory(store:Store,replyId:string,source:string,now=Date.now(),author='',maxBudget=3200){
  const terms=words(source);
  const deliveryRelevant=/\b(?:moltbook|challenge|verification badge|posting verification|social publish\w*)\b/i.test(source);
- const relevant=(id:string,text:string)=>!((/verification|generation_reliability|model_failure/.test(id)||/verification|public visibility/i.test(text))&&!deliveryRelevant)&&(/^reply_|^confirmed_delivery$/.test(id)||[...words(text)].some(w=>terms.has(w)));
+ const relevant=(id:string,text:string)=>id==='moltbook_spam_observed'||!((/verification|generation_reliability|model_failure/.test(id)||/verification|public visibility/i.test(text))&&!deliveryRelevant)&&(/^reply_|^moltbook_spam_observed$|^confirmed_delivery$/.test(id)||[...words(text)].some(w=>terms.has(w)));
  const lessons=store.db.prepare('SELECT kind,lesson,evidence_count,updated_at FROM kestrel_lessons ORDER BY evidence_count DESC,updated_at DESC LIMIT 30').all().filter(l=>relevant(String(l.kind),String(l.lesson))).slice(0,3);
  // Prefer successful examples with lexical overlap. Stored conversation text is untrusted data.
- const examples=store.db.prepare(`SELECT r.id,r.body,d.title FROM social_replies r JOIN social_discussions d ON d.id=r.post_id WHERE r.status='PUBLISHED' AND r.id<>? ORDER BY r.attempted_at DESC LIMIT 50`).all(replyId).map(r=>({...r,score:[...words(String(r.title)+' '+String(r.body))].filter(w=>terms.has(w)).length})).filter(r=>r.score>=5 && (deliveryRelevant || !/verification|publish workflow|spam label/i.test(String(r.body)))).sort((a,b)=>b.score-a.score).slice(0,2);
+ const examples=store.db.prepare(`SELECT r.id,r.body,d.title FROM social_replies r JOIN social_discussions d ON d.id=r.post_id WHERE r.status='PUBLISHED' AND r.id<>? AND NOT EXISTS(SELECT 1 FROM social_observations o WHERE o.target='reply:'||r.id AND o.first_spam_at IS NOT NULL) ORDER BY r.attempted_at DESC LIMIT 50`).all(replyId).map(r=>({...r,score:[...words(String(r.title)+' '+String(r.body))].filter(w=>terms.has(w)).length})).filter(r=>r.score>=5 && (deliveryRelevant || !/verification|publish workflow|spam label/i.test(String(r.body)))).sort((a,b)=>b.score-a.score).slice(0,2);
  const insights=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 20").all().filter(i=>relevant(String(i.topic),String(i.lesson))).slice(0,2);
  const selected:{type:string,id:string}[]=[];let context='';
  const budget=Math.max(0,Math.min(3200,maxBudget,12000-source.length));

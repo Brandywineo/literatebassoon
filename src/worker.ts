@@ -4,7 +4,7 @@ import {reflectOnMemory} from './memory.ts';
 import {runSocialCycle} from './social-autonomy.ts';
 import { openStore } from './store.ts';
 import { generate, ModelError } from './models.ts';
-import { discoverDiscussions } from './social.ts';
+import { discoverDiscussions,syncSocialProfile } from './social.ts';
 import { syncMoltbook } from './moltbook.ts';
 import { inspectOperations } from './operator.ts';
 import { pathToFileURL } from 'node:url';
@@ -36,7 +36,7 @@ async function main(){
   try {while(!stopped){
     heartbeat(store.settings().enabled?'online':'paused');
     // Social I/O runs separately so long model calls cannot hold the customer queue.
-    if(!socialFlight)socialFlight=(async()=>{try{await runAdminChat(store);await runAgentCore(store);await reflectOnMemory(store,generate);await syncMoltbook(store);await discoverDiscussions(store);await runSocialCycle(store);}catch{console.error('Kestrel social cycle failed; job processing continues');}})().finally(()=>{socialFlight=undefined;});
+    if(!socialFlight)socialFlight=(async()=>{try{await runAdminChat(store);await runAgentCore(store);await reflectOnMemory(store,generate);await syncMoltbook(store);if(store.db.prepare('SELECT enabled FROM social_autonomy WHERE id=1').get()?.enabled)await syncSocialProfile(store);await discoverDiscussions(store);await runSocialCycle(store);}catch{console.error('Kestrel social cycle failed; job processing continues');}})().finally(()=>{socialFlight=undefined;});
     await runOne(store);if(!stopped)await new Promise(resolve=>setTimeout(resolve,2000));
   }await socialFlight; }
   finally{clearInterval(timer);clearInterval(monitorTimer);heartbeat('offline');store.db.close();}
