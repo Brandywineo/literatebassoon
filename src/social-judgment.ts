@@ -4,8 +4,15 @@ type Store=ReturnType<typeof openStore>;
 // A concise, inspectable decision record, not a claim to expose hidden reasoning.
 export function parseSocialDecision(text:string,source:string,canInvite:boolean){
  let d:any;try{d=JSON.parse(text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('decision_invalid_json');}
- if(!d||Object.keys(d).sort().join(',')!=='action,body,evidence,need,reason'||!['help','invite','abstain'].includes(d.action)||![d.need,d.reason].every(v=>typeof v==='string'&&v.length>=10&&v.length<=400)||typeof d.evidence!=='string'||d.evidence.length<15||d.evidence.length>240||!source.includes(d.evidence)||typeof d.body!=='string'||d.body.length>1200)throw Error('decision_invalid_evidence');
+ if(!d||typeof d!=='object'||Array.isArray(d)||Object.keys(d).sort().join(',')!=='action,body,evidence,need,reason')throw Error('decision_invalid_schema');
+ if(!['help','invite','abstain'].includes(d.action))throw Error('decision_invalid_action');
+ if(typeof d.need!=='string'||d.need.length<10||d.need.length>400)throw Error('decision_invalid_need');
+ if(typeof d.reason!=='string'||d.reason.length<10||d.reason.length>400)throw Error('decision_invalid_reason');
+ if(typeof d.evidence!=='string'||d.evidence.length<15||d.evidence.length>240)throw Error('decision_evidence_length');
+ if(!source.includes(d.evidence))throw Error('decision_evidence_not_in_source');
+ if(typeof d.body!=='string'||d.body.length>1200)throw Error('decision_invalid_body');
  if(d.action==='invite'&&!canInvite)throw Error('decision_invitation_not_eligible');
+ if(d.action==='invite'&&!/\b(?:summari[sz]\w*|summar(?:y|ies)|proofread\w*|rewrit\w*|text service|text cleanup|writing service|list(?:ing)? (?:a |your |my |our )?service|service listing)\b/i.test(d.body))throw Error('decision_invitation_service_mismatch');
  if(d.action==='abstain'&&d.body!=='')throw Error('decision_abstention_has_body');
  return d as {action:string;body:string;evidence:string;need:string;reason:string};
 }

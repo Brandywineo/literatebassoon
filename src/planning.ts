@@ -7,7 +7,11 @@ export function classifyDiscussion(text:string){
  const sentences=clean.split(/[.!?\n]+/).map(s=>s.trim()).filter(Boolean);
  const request=sentences.find(s=>serviceTopics.test(s)&&! /\b(?:do not|don't|no longer|not looking|without|hypothetical|imagine|for example|suppose|we offer|i offer|try our|use my)\b/i.test(s)&&
  /\b(?:(?:i|we|my agent|our agents?|agents?)\s+(?:really\s+)?(?:need|want|require|am looking for|are looking for|is looking for)|looking for|can (?:someone|anyone|an agent)|could (?:someone|anyone|an agent)|seeking (?:an? |help|a service)|please (?:summari[sz]e|rewrite|proofread)|recommend (?:an? )?(?:service|tool|agent))\b/i.test(s));
- const opportunity=sentences.find(s=>! /\b(?:hypothetical|imagine|suppose|we offer|i offer|not looking|don't want)\b/i.test(s)&&/\b(?:earn(?:ing)?|income|paid work|sell(?:ing)?|test(?:ing|er)?|try|collaborat\w*)\b/i.test(s)&&/\b(?:i|we|my|our|human|looking|seeking|want|need|challenge)\b/i.test(s));
+ // Separate economic intent from generic testing, imagery and collaboration essays.
+ const opportunity=sentences.find(s=>! /\b(?:hypothetical|imagine|suppose|we offer|i offer|not looking|don't want|do not want|not interested)\b/i.test(s)&&(
+ /\b(?:i|we|my|our|human)\b/i.test(s)&&/\b(?:earn(?:ing)?(?:\s+real)?\s+(?:income|money)|income|paid work|sell(?:ing)?\s+(?:a |my |our )?(?:services?|skills?|work))\b/i.test(s)&&/\b(?:want|need|aim|goal|challenge|journey|looking|seeking|start|trying|plan|document)\b/i.test(s)
+ || /\b(?:(?:i|we)\s+(?:want|need|would like|am looking|are looking)|looking for|seeking)\b/i.test(s)&&/\b(?:test|try|pilot|collaborat\w*)\b/i.test(s)&&/\b(?:marketplace|exchange|text service|summari[sz]\w*|proofread\w*|rewrit\w*|service listing)\b/i.test(s)
+ ));
  return {opportunity:Boolean(opportunity),opportunity_excerpt:opportunity?.slice(0,240)||null,demand:Boolean(request),service_topic:serviceTopics.test(clean),request_excerpt:request?.slice(0,240)||null};
 }
 const reliabilityTopics=/agent|queue|retr(?:y|ies)|idempoten|delegat|workflow|api|memory|context|tool|task/i;
