@@ -52,11 +52,13 @@ function mismatchedQuestionEvidence(store:Store,lesson:string,evidence:string){
 export function learnFromOutcomes(store:Store,now=Date.now()){
  return store.transaction(()=>{
   let added=0;
+  // Refresh canonical rule wording without resetting evidence or its observation date.
+  for(const [kind,lesson] of Object.entries(rules))store.db.prepare('UPDATE kestrel_lessons SET lesson=? WHERE kind=? AND lesson<>?').run(lesson,kind,lesson);
   const record=(source:string,signature:string,kind:string,observation:string)=>{
    const id=source+':'+signature;
    const insert=store.db.prepare('INSERT OR IGNORE INTO kestrel_experience(id,source,kind,observation,observed_at) VALUES(?,?,?,?,?)').run(id,source,kind,observation,now);
    if(!insert.changes)return;added++;
-   store.db.prepare(`INSERT INTO kestrel_lessons(kind,lesson,evidence_count,updated_at) VALUES(?,?,1,?) ON CONFLICT(kind) DO UPDATE SET evidence_count=evidence_count+1,updated_at=excluded.updated_at`).run(kind,rules[kind],now);
+   store.db.prepare(`INSERT INTO kestrel_lessons(kind,lesson,evidence_count,updated_at) VALUES(?,?,1,?) ON CONFLICT(kind) DO UPDATE SET lesson=excluded.lesson,evidence_count=evidence_count+1,updated_at=excluded.updated_at`).run(kind,rules[kind],now);
   };
   for(const row of store.db.prepare(`SELECT id,status FROM social_replies WHERE status IN ('PUBLISHED','VERIFICATION_FAILED','VERIFICATION_EXPIRED') ORDER BY rowid DESC LIMIT 200`).all()){
    const kind=row.status==='PUBLISHED'?'confirmed_delivery':'verification_failure';
@@ -94,7 +96,7 @@ export function retrieveMemory(store:Store,replyId:string,source:string,now=Date
  const terms=words(source);
  const deliveryRelevant=/\b(?:moltbook|challenge|verification badge|posting verification|social publish\w*)\b/i.test(source);
  const relevant=(id:string,text:string)=>id==='moltbook_spam_observed'||!((/verification|generation_reliability|model_failure/.test(id)||/verification|public visibility/i.test(text))&&!deliveryRelevant)&&(/^reply_|^moltbook_spam_observed$|^confirmed_delivery$/.test(id)||[...words(text)].some(w=>terms.has(w)));
- const lessons=store.db.prepare('SELECT kind,lesson,evidence_count,updated_at FROM kestrel_lessons ORDER BY evidence_count DESC,updated_at DESC LIMIT 30').all().filter(l=>relevant(String(l.kind),String(l.lesson))).slice(0,3);
+ const lessons=store.db.prepare("SELECT kind,lesson,evidence_count,updated_at FROM kestrel_lessons ORDER BY CASE WHEN kind LIKE 'reply_%' OR kind LIKE 'decision_%' THEN 0 ELSE 1 END,updated_at DESC,evidence_count DESC LIMIT 30").all().filter(l=>relevant(String(l.kind),String(l.lesson))).slice(0,3);
  // Prefer successful examples with lexical overlap. Stored conversation text is untrusted data.
  const examples=store.db.prepare(`SELECT r.id,r.body,d.title FROM social_replies r JOIN social_discussions d ON d.id=r.post_id WHERE r.status='PUBLISHED' AND r.id<>? AND NOT EXISTS(SELECT 1 FROM social_observations o WHERE o.target='reply:'||r.id AND o.first_spam_at IS NOT NULL) ORDER BY r.attempted_at DESC LIMIT 50`).all(replyId).map(r=>({...r,score:[...words(String(r.title)+' '+String(r.body))].filter(w=>terms.has(w)).length})).filter(r=>r.score>=5 && (deliveryRelevant || !/verification|publish workflow|spam label/i.test(String(r.body)))).sort((a,b)=>b.score-a.score).slice(0,2);
  const insights=store.db.prepare("SELECT i.topic,i.lesson FROM kestrel_insights i LEFT JOIN kestrel_insight_checks c ON c.topic=i.topic WHERE c.status IS NULL OR c.status<>'CONTRADICTED' ORDER BY i.updated_at DESC LIMIT 20").all().filter(i=>relevant(String(i.topic),String(i.lesson))).slice(0,2);

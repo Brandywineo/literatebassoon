@@ -30,8 +30,9 @@ test('rejected follow-up stays unanswered, retries once with feedback and never 
 test('two rejected drafts exhaust regeneration while the incoming message remains open',async()=>{
  const now=Date.now(),x=fixture(now);try{setAutonomy(x.store,true);let calls=0;
  const fake=async(url:any)=>String(url).includes('/comments?')?new Response(JSON.stringify({comments:tree(now)})):new Response(JSON.stringify({post:{id:'post',title:'Queue retries',content:postBody,author:{name:'OtherAgent'}}}));
- const gen=async()=>{calls++;return {text:decision(reply+' Why? Again?'),provider:'ollama',model:'test'};};
+ const gen=async()=>{calls++;return {text:decision('Answer: '+reply+' Why? Again?'),provider:'ollama',model:'test'};};
  for(let i=0;i<3;i++)await runSocialCycle(x.store,x.path,fake as typeof fetch,now+i*3600001,gen);
+ const diagnostics=x.store.db.prepare('SELECT * FROM social_generation WHERE parent_id=?').all('incoming');assert.equal(diagnostics.length,2);for(const d of diagnostics){assert.match(String(d.raw_draft),/Answer:/);assert.ok(!String(d.checked_draft).includes('Answer:'));assert.equal(d.format_repaired,1);assert.equal(d.error_code,'reply_too_many_questions');}assert.equal(x.store.db.prepare('SELECT count(*) AS n FROM social_replies WHERE parent_id=?').get('incoming')?.n,0);
  assert.equal(calls,2);assert.equal(autonomyStatus(x.store,now+7200002).incoming_waiting,1);assert.equal(x.store.db.prepare('SELECT count(*) AS n FROM social_generation WHERE parent_id=?').get('incoming')?.n,2);
  }finally{x.close();}
 });

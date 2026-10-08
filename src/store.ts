@@ -70,6 +70,9 @@ export function openStore(dir: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;`);
   db.exec(`CREATE TABLE IF NOT EXISTS social_autonomy(id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT); INSERT OR IGNORE INTO social_autonomy(id) VALUES(1); CREATE TABLE IF NOT EXISTS social_generation(id TEXT PRIMARY KEY,post_id TEXT NOT NULL,started_at INTEGER NOT NULL,status TEXT NOT NULL,error_code TEXT);`);
   column('social_generation','finished_at','INTEGER');
+  column('social_generation','raw_draft','TEXT');
+  column('social_generation','checked_draft','TEXT');
+  column('social_generation','format_repaired','INTEGER NOT NULL DEFAULT 0');
   if(!db.prepare('PRAGMA table_info(social_replies)').all().some(c=>c.name==='parent_id')) {
     db.exec(`CREATE TABLE social_replies_next(id TEXT PRIMARY KEY,post_id TEXT NOT NULL REFERENCES social_discussions(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'DRAFT',created_at TEXT DEFAULT CURRENT_TIMESTAMP,attempted_at INTEGER,content_hash TEXT,comment_id TEXT,challenge TEXT,verification_code TEXT,expires_at TEXT,error_code TEXT,parent_id TEXT);
       INSERT INTO social_replies_next(id,post_id,body,status,created_at,attempted_at,content_hash,comment_id,challenge,verification_code,expires_at,error_code) SELECT id,post_id,body,status,created_at,attempted_at,content_hash,comment_id,challenge,verification_code,expires_at,error_code FROM social_replies;

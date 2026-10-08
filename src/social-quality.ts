@@ -9,8 +9,17 @@ export function similarContribution(a:string,b:string){
  const aw=new Set(at.filter(w=>w.length>3&&!stop.has(w))),bw=new Set(bt.filter(w=>w.length>3&&!stop.has(w))),common=[...aw].filter(w=>bw.has(w)).length;
  return (ag.size>=12&&bg.size>=12&&overlap>=0.55)||(aw.size>=12&&bw.size>=12&&common/Math.min(aw.size,bw.size)>=0.86&&common/Math.max(aw.size,bw.size)>=0.70);
 }
+// Remove presentation scaffolding only. All substantive text is retained and revalidated.
+export function normalizeContribution(body:string){
+ return body.replace(/(^|[.!?]\s+|\n\s*)(?:ask|question|answer|limitation|benefit):\s*/gi,'$1').trim();
+}
+export function privateDraft(text:string){
+ let safe=text.slice(0,8000);
+ for(const key of ['OPENAI_API_KEY','ADMIN_KEY','MOLTBOOK_API_KEY']){const value=process.env[key];if(value)safe=safe.split(value).join('[REDACTED]');}
+ return safe.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|moltbook_[A-Za-z0-9_-]{12,})\b/g,'[REDACTED]');
+}
 export function validateContributionHistory(store:Store,body:string,thread:{body:string}[]=[],id=''){
- if(/(?:^|[.!]\s*)(?:ask|question|answer|limitation|benefit):/i.test(body))throw Error('reply_template_residue');
+ if(/(?:^|[.!]\s*)(?:ask|question|answer):/i.test(body))throw Error('reply_template_residue');
  const history=store.db.prepare('SELECT body FROM social_replies WHERE id<>? AND attempted_at IS NOT NULL ORDER BY attempted_at DESC LIMIT 100').all(id);
  if(history.some(r=>similarContribution(body,String(r.body))))throw Error('reply_repeats_own_contribution');
  // A near-verbatim repeat of an existing answer adds no new contribution.

@@ -1,4 +1,4 @@
-import {validateContributionHistory} from './social-quality.ts';
+import {validateContributionHistory,normalizeContribution,privateDraft} from './social-quality.ts';
 import {moderationPolicy,reconcileProfileAndPosts} from './social-observations.ts';
 import {parseSocialDecision,invitationEligible,invitationDisclosure,recordPrivateIncidents,sourceExcerpts} from './social-judgment.ts';
 import {socialLimits,unansweredIncoming,retryEligibleIncoming,retryableReplyErrors} from './social-policy.ts';
@@ -104,6 +104,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   while(JSON.stringify(context).length>12000&&context.opportunity.services.length)context.opportunity.services.pop();
   if(JSON.stringify(context).length>12000)throw Error('decision_context_limit');
   const output=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-decision',JSON.stringify(context),fetcher);
+  store.db.prepare('UPDATE social_generation SET raw_draft=? WHERE id=?').run(privateDraft(output.text),id);
   const decision=parseSocialDecision(output.text,evidenceSource,canInvite,context.evidence_excerpts);
   store.db.prepare('INSERT INTO kestrel_social_decisions(id,post_id,action,need,evidence,reason,research,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id,p.id,decision.action,decision.need,decision.evidence,decision.reason,JSON.stringify({thread_comments:research,source_checked:true,limits:'Bounded source and thread research; external claims are not independently verified.'}),now);
   if(decision.action==='abstain'){
@@ -111,7 +112,9 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
    store.db.prepare("UPDATE kestrel_plans SET status='ABSTAINED' WHERE id=?").run(id);
    store.db.prepare("UPDATE social_autonomy SET last_reason='judgment_abstained' WHERE id=1").run();return {status:'ABSTAINED'};
   }
-  let reply=validateAutonomousReply(decision.body,source);
+  const normalized=normalizeContribution(decision.body);
+  store.db.prepare('UPDATE social_generation SET checked_draft=?,format_repaired=? WHERE id=?').run(privateDraft(normalized),Number(normalized!==decision.body),id);
+  let reply=validateAutonomousReply(normalized,source);
   validateContributionHistory(store,reply,research,id);
   if(decision.action==='invite'){reply+='\n\n'+invitationDisclosure;if(reply.length>1200)throw Error('reply_too_long');}
   // Do not allow a recovered/interrupted generation to apply a late response.
