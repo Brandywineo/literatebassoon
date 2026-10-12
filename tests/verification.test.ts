@@ -67,7 +67,7 @@ test('source grounding preserves compound quantities and rejects invented operat
  assert.throws(()=>groundedChallenge('{"a":5,"b":3,"op":"/"}',source),/challenge_operand_mismatch/);
  assert.throws(()=>groundedChallenge('{"a":35,"b":3,"op":"/"}',source),/challenge_operation_mismatch/);
  assert.equal(groundedChallenge('{"a":24,"b":6,"op":"-"}','Force is twenty four and decreases by six.').answer,'18.00');
- assert.throws(()=>challengeSourceFacts('Thwenty five plus seven.'),/challenge_ambiguous/);
+ assert.deepEqual(challengeSourceFacts('Thwenty five plus seven.'),{quantities:[25,7],operation:'+'});
  assert.throws(()=>challengeSourceFacts('Someone has twenty four against six.'),/challenge_ambiguous/);
  assert.throws(()=>challengeSourceFacts('Twenty four and six. What happens?'),/challenge_ambiguous/);
  assert.throws(()=>challengeSourceFacts('Twenty four plus six minus two.'),/challenge_ambiguous/);

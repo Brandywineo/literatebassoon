@@ -42,9 +42,9 @@ const wordPattern=[...numberWords.keys()].sort((a,b)=>b.length-a.length).map(wor
 export function challengeSourceFacts(source:string){
  if(source.length>2000)throw Error('challenge_ambiguous');
  // Collapse punctuation and spacing in written words, but retain numeric separators.
- const normalized=source.toLowerCase().replace(/[^a-z0-9.\s]/g,'');
+ const normalized=source.toLowerCase().replace(/[^a-z0-9.\s]/g,'').replace(/\bthwenty\b/g,'twenty').replace(/\bthwirty\b/g,'thirty').replace(/\bthwree\b/g,'three');
  // Unknown number-like spellings are not permission to extract only their suffix.
- if(/\b[a-z]*(?:enty|irty|orty|ifty|ixty|eventy|ighty|inety|teen|hundred)\b/g.test(normalized.replace(new RegExp('\\b(?:'+syllables.join('|')+')\\b','g'),'')))throw Error('challenge_ambiguous');
+ if(/\b[a-z]*(?:ty|teen|hundred)\b/g.test(normalized.replace(new RegExp('\\b(?:'+syllables.join('|')+')\\b','g'),'')))throw Error('challenge_ambiguous');
  if(/-\s*\d|\d\s*%/.test(source))throw Error('challenge_ambiguous');
  const quantities=[...normalized.matchAll(new RegExp('\\b(?:'+wordPattern+'|[0-9]+(?:\\.[0-9]+)?)\\b','g'))].map(m=>numberWords.get(m[0].replace(/\s/g,''))??Number(m[0]));
  if(quantities.length!==2||quantities.some(n=>!Number.isFinite(n)||n>1e8))throw Error('challenge_ambiguous');
@@ -53,6 +53,8 @@ export function challengeSourceFacts(source:string){
  if(/\b(?:minus|subtract\w*|decreas\w*|loses?|lost|reduces?|remaining|remains?|slows?)\b/.test(normalized))operations.add('-');
  if(/\b(?:multipl\w*|product|times|each)\b|\bmass\b.*\bacceleration\b|\bacceleration\b.*\bmass\b/.test(normalized))operations.add('*');
  if(/\b(?:divid\w*|quotient)\b|\bsplit\b.*\bequal\w*\b|\bequally\b.*\bsplit\b/.test(normalized))operations.add('/');
+ // Explicit operation words win over an incidental adjective such as each.
+ if(operations.has('+')&&/\b(?:plus|added|addition|increas\w*|gains?|combined|sum)\b/.test(normalized)&&! /\b(?:times|multipl\w*|product)\b/.test(normalized))operations.delete('*');
  if(!operations.size&&/\btotal\b/.test(normalized))operations.add('+');
  if(operations.size!==1||/\b(?:increases?|decreases?|reduces?|slows?)\s+to\b/.test(normalized))throw Error('challenge_ambiguous');
  return {quantities,operation:[...operations][0]};
@@ -85,7 +87,7 @@ export async function processChallenges(store:Store,path=credentialPath(),fetche
  const {row,table,key,kind,target}=reserved;
  try{
   const facts=challengeSourceFacts(String(row.challenge));
-  const out=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-verification',JSON.stringify({challenge:String(row.challenge),source_quantities:facts.quantities,source_operation:facts.operation}),fetcher);
+  const out=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-verification',JSON.stringify({challenge:String(row.challenge),extraction_rule:"Recover entire compound numbers independently; do not guess missing syllables."}),fetcher);
   const {answer,expression}=groundedChallenge(out.text,String(row.challenge));
   store.db.prepare('UPDATE social_verification_attempts SET equation=?,answer=? WHERE target=?').run(`${expression.a} ${expression.op} ${expression.b}`,answer,target);
   store.db.prepare(`UPDATE ${table} SET status='PENDING_VERIFICATION' WHERE ${key}=? AND status='SOLVING'`).run(row[key]);

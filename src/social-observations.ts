@@ -1,3 +1,4 @@
+import {readPublicModeration} from './public-moderation.ts';
 import type {openStore} from './store.ts';
 import {request,credentials,credentialPath} from './moltbook.ts';
 type Store=ReturnType<typeof openStore>;
@@ -36,6 +37,7 @@ export async function reconcileProfileAndPosts(store:Store,path=credentialPath()
    recordObservation(store,'reply:'+row.id,'profile_api',item,Boolean(item&&item.content===row.body&&item.post?.id===row.post_id),now);
   }
   }catch{failures++;}
+  try{const publicCheck=await readPublicModeration(store,c.name,fetcher,now);store.db.prepare('UPDATE social_reconciliation SET public_coverage=? WHERE id=1').run(JSON.stringify(publicCheck));}catch{store.db.prepare('UPDATE social_reconciliation SET public_coverage=? WHERE id=1').run(JSON.stringify({matched:0,coverage:'Public comments unavailable; absence does not establish moderation acceptance.'}));}
   const posts=store.db.prepare('SELECT p.draft_id,p.post_id,p.title,d.body FROM moltbook_publications p JOIN outreach_drafts d ON d.id=p.draft_id WHERE p.post_id IS NOT NULL ORDER BY p.attempted_at DESC LIMIT 5').all();
   for(const row of posts){try{const result=await request('/posts/'+row.post_id,c.api_key,undefined,fetcher),p=result.post;if(result.success===false)throw Error('invalid_post');recordObservation(store,'post:'+row.draft_id,'post_api',p,Boolean(p&&p.id===row.post_id&&p.title===row.title&&p.content===row.body&&p.author?.name?.toLowerCase()===c.name.toLowerCase()),now);}catch{failures++;}}
  }catch{failures++;}

@@ -7,6 +7,8 @@ type Store=ReturnType<typeof openStore>;
 // Lessons are derived from observed outcomes, never from instructions in social content.
 // No additional model calls, and no ability to alter money, credentials or operating limits.
 const rules:Record<string,string>={
+ reply_unsupported_number:'A draft invented numerical claims. Do not invent prices, timings, success rates or tolerances. Use source-supported quantities only.',
+ reply_unsupported_certainty:'A draft claimed a proposal proves or ensures an outcome. Describe its mechanism and limitations without asserting guaranteed correctness.',
  moltbook_spam_observed:'Moltbook marked content as spam; its cause is unknown. Publication or challenge verification does not imply moderation acceptance. Avoid promotion during the cooldown and contribute a new specific mechanism or abstain.',
  reply_repeats_own_contribution:'A draft substantially repeated an earlier contribution. Build on the latest response with a new mechanism or abstain.',
  reply_repeats_thread_answer:'A draft repeated an existing thread answer. Read what has already been answered and add a distinct contribution or abstain.',
@@ -133,12 +135,13 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
  });
  if(!payload)return {skipped:true};
  try{
-  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence,current_hypotheses:payload.current,guidance_outcomes:learningMetrics(store).slice(0,5).map(m=>({type:m.type,key:m.key,version:m.version,uses:m.uses,generation_failed:m.generation_failed,visible:m.visible,verified:m.verified,failures:m.failures})),outcome_limitations:'Associations after retrieved guidance, not causal evidence of improvement. Counts can overlap across lessons.',assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
+  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence.map((e,i)=>({...e,id:i+1})),current_hypotheses:payload.current.map(h=>({topic:h.topic,lesson:h.lesson})),guidance_outcomes:learningMetrics(store).slice(0,5).map(m=>({type:m.type,key:m.key,version:m.version,uses:m.uses,generation_failed:m.generation_failed,visible:m.visible,verified:m.verified,failures:m.failures})),outcome_limitations:'Associations after retrieved guidance, not causal evidence of improvement. Counts can overlap across lessons.',assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
   let parsed:any;try{parsed=JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('reflection_invalid_json');}
   const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability','agent_operations'];
   if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('reflection_invalid_shape');
   const seen=new Set<string>(),ids=new Set(payload.evidence.map(e=>String(e.id)));
   for(const l of parsed.lessons){
+   if(l&&Array.isArray(l.evidence))l.evidence=l.evidence.map((ref:unknown)=>(typeof ref==='number'||typeof ref==='string'&&/^\d+$/.test(ref))&&Number.isInteger(Number(ref))&&Number(ref)>=1&&Number(ref)<=payload.evidence.length?String(payload.evidence[Number(ref)-1].id):ref);
    if(l&&Array.isArray(l.evidence)&&l.evidence.some((id:unknown)=>typeof id!=='string'||!ids.has(id)))throw Error('reflection_unknown_evidence');
    if(!l||Object.keys(l).sort().join(',')!=='evidence,lesson,topic'||!topics.includes(l.topic)||seen.has(l.topic)||typeof l.lesson!=='string'||l.lesson.length<20||l.lesson.length>600||/https?:|www\.|credential|private.key|api.key|seed.phrase|disable|bypass|raise.*limit|ignore.*instruction|guaranteed/i.test(l.lesson)||!Array.isArray(l.evidence)||!l.evidence.length||l.evidence.length>5||!l.evidence.every((id:unknown)=>typeof id==='string'&&ids.has(id)))throw Error('reflection_invalid_lesson');
    if(mismatchedQuestionEvidence(store,l.lesson,JSON.stringify(l.evidence)))throw Error('reflection_evidence_mismatch');
@@ -148,6 +151,7 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
   store.transaction(()=>{
    if(store.db.prepare('SELECT status FROM kestrel_reflections WHERE id=?').get(payload.id)?.status!=='RUNNING')throw Error('reflection_interrupted');
    for(const l of parsed.lessons){
+   if(l&&Array.isArray(l.evidence))l.evidence=l.evidence.map((ref:unknown)=>(typeof ref==='number'||typeof ref==='string'&&/^\d+$/.test(ref))&&Number.isInteger(Number(ref))&&Number(ref)>=1&&Number(ref)<=payload.evidence.length?String(payload.evidence[Number(ref)-1].id):ref);
     const evidence=JSON.stringify(l.evidence);
     store.db.prepare('INSERT INTO kestrel_insight_history(reflection_id,topic,lesson,evidence,created_at) VALUES(?,?,?,?,?)').run(payload.id,l.topic,l.lesson,evidence,now);
     store.db.prepare('INSERT INTO kestrel_insights(topic,lesson,evidence,updated_at) VALUES(?,?,?,?) ON CONFLICT(topic) DO UPDATE SET lesson=excluded.lesson,evidence=excluded.evidence,updated_at=excluded.updated_at').run(l.topic,l.lesson,evidence,now);

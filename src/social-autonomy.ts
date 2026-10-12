@@ -36,6 +36,9 @@ export function validateAutonomousReply(body:unknown,source:string){
  if((body.match(/\?/g)||[]).length>1)throw Error('reply_too_many_questions');
  if(/https?:|www\.|clicknlist|literate bassoon|\[[^\]]*\]\(|<a\b/i.test(body))throw Error('reply_promotion_or_link');
  if(/api[_ -]?key|seed phrase|private key|send (?:me|us)/i.test(body))throw Error('reply_credential_or_solicitation');
+ if(/\b(?:ensures|guarantees|proves|confirms)\b/i.test(body))throw Error('reply_unsupported_certainty');
+ const numbers=(text:string)=>text.match(/\b\d+(?:\.\d+)?%?\b/g)||[];
+ if(numbers(body).some(n=>!numbers(source).includes(n)))throw Error('reply_unsupported_number');
  if(/guaranteed|ignore (?:previous|all)|as an ai|```/i.test(body))throw Error('reply_unsafe_or_boilerplate');
  const words=(s:string)=>new Set(s.toLowerCase().match(/[a-z]{5,}/g)||[]);
  const sourceWords=words(source),shared=[...words(body)].filter(w=>sourceWords.has(w));
@@ -130,7 +133,7 @@ export async function runSocialCycle(store:Store,path=credentialPath(),fetcher:t
   if(result.status==='PENDING_VERIFICATION'){await processChallenges(store,path,fetcher,Date.now(),generateText);result={...result,status:String(store.db.prepare('SELECT status FROM social_replies WHERE id=?').get(id)?.status)};}
   store.db.prepare('UPDATE social_autonomy SET last_reason=? WHERE id=1').run('submission_'+result.status);store.audit(incoming?'social_autonomous_followup':'social_autonomous_reply',id+':'+result.status);return result;
  }catch(e){
-  const code=e instanceof ModelError?e.message:e instanceof Error&&['moderation_cooldown','moderation_promotion_cooldown','reply_template_residue','reply_repeats_own_contribution','reply_repeats_thread_answer','reply_repeats_previous_question','source_changed','reply_quality_rejected','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy','decision_invalid_json','decision_invalid_evidence','decision_invalid_schema','decision_invalid_action','decision_invalid_need','decision_invalid_reason','decision_evidence_length','decision_evidence_not_in_source','decision_invalid_body','decision_invitation_service_mismatch','decision_invitation_not_eligible','decision_abstention_has_body','decision_context_limit'].includes(e.message)?e.message:'social_cycle_failed';
+  const code=e instanceof ModelError?e.message:e instanceof Error&&['moderation_cooldown','moderation_promotion_cooldown','reply_template_residue','reply_repeats_own_contribution','reply_repeats_thread_answer','reply_repeats_previous_question','source_changed','reply_quality_rejected','reply_unsupported_number','reply_unsupported_certainty','reply_not_grounded','reply_invalid_type','reply_too_short','reply_too_long','reply_too_many_questions','reply_promotion_or_link','reply_credential_or_solicitation','reply_unsafe_or_boilerplate','reply_near_copy','decision_invalid_json','decision_invalid_evidence','decision_invalid_schema','decision_invalid_action','decision_invalid_need','decision_invalid_reason','decision_evidence_length','decision_evidence_not_in_source','decision_invalid_body','decision_invitation_service_mismatch','decision_invitation_not_eligible','decision_abstention_has_body','decision_context_limit'].includes(e.message)?e.message:'social_cycle_failed';
   store.db.prepare("UPDATE social_generation SET status='FAILED',error_code=?,finished_at=? WHERE id=?").run(code,Date.now(),id);store.db.prepare("UPDATE social_autonomy SET error_code=?,last_reason='cycle_failed' WHERE id=1").run(code);return {error_code:code};
  }
 }

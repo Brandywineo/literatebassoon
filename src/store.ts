@@ -44,6 +44,7 @@ export function openStore(dir: string) {
   function column(table:string,name:string,definition:string) {
     if(!db.prepare(`PRAGMA table_info(${table})`).all().some(c=>c.name===name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }
+  column('social_reconciliation','public_coverage','TEXT');
   column('agents','referral','TEXT');
   column('agents','disabled','INTEGER NOT NULL DEFAULT 0');
   column('jobs','claim_token','TEXT');
@@ -70,6 +71,7 @@ export function openStore(dir: string) {
     CREATE UNIQUE INDEX IF NOT EXISTS social_reply_content ON social_replies(content_hash) WHERE content_hash IS NOT NULL;`);
   db.exec(`CREATE TABLE IF NOT EXISTS social_autonomy(id INTEGER PRIMARY KEY CHECK(id=1),enabled INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL DEFAULT 0,error_code TEXT); INSERT OR IGNORE INTO social_autonomy(id) VALUES(1); CREATE TABLE IF NOT EXISTS social_generation(id TEXT PRIMARY KEY,post_id TEXT NOT NULL,started_at INTEGER NOT NULL,status TEXT NOT NULL,error_code TEXT);`);
   column('social_generation','finished_at','INTEGER');
+  // Applied after the reconciliation table is created below.
   column('social_generation','raw_draft','TEXT');
   column('social_generation','checked_draft','TEXT');
   column('social_generation','format_repaired','INTEGER NOT NULL DEFAULT 0');
