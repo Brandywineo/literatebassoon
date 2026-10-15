@@ -1,7 +1,16 @@
 import {Worker,isMainThread,parentPort,workerData} from 'node:worker_threads';
-export const recipes=['memory_conflicts','idempotency_replay','text_fact_preservation'];
+export const recipes=['memory_conflicts','idempotency_replay','text_fact_preservation','field_stripping'];
 export function experiment(recipe:string,input:any){
  if(!recipes.includes(recipe)||JSON.stringify(input).length>10000)throw Error('experiment_invalid');
+ if(recipe==='field_stripping'){
+  const {record,allowed_fields,required_fields}=input;
+  const fields=(v:any)=>Array.isArray(v)&&v.length<=30&&v.every(k=>typeof k==='string'&&/^[a-zA-Z][a-zA-Z0-9_]{0,49}$/.test(k));
+  if(!record||typeof record!=='object'||Array.isArray(record)||Object.keys(record).length>30||!fields(Object.keys(record))||!fields(allowed_fields)||!fields(required_fields)||!required_fields.length)throw Error('experiment_invalid');
+  const written=Object.fromEntries(Object.entries(record).filter(([k])=>allowed_fields.includes(k)));
+  const missing=(r:any)=>required_fields.filter((k:string)=>!Object.hasOwn(r,k));
+  const before=missing(record),after=missing(written),stripped=Object.keys(record).filter(k=>!Object.hasOwn(written,k));
+  return {recipe,stripped_fields:stripped,missing_before:before,missing_after:after,pre_write_valid:before.length===0,stored_valid:after.length===0,pre_write_validation_missed_loss:before.length===0&&after.length>0,limitation:'Synthetic allowlist write and required-field presence checks only; no external API was called. A pre-write check can miss later data loss; this does not establish a defect in any real API or validator.'};
+ }
  if(recipe==='memory_conflicts'){
   const updates=input.updates;if(!Array.isArray(updates)||updates.length<2||updates.length>100||updates.some(x=>!x||typeof x.key!=='string'||typeof x.value!=='string'||x.key.length>100||x.value.length>200))throw Error('experiment_invalid');
   const latest=new Map<string,string>(),first=new Map<string,string>();for(const x of updates){if(!first.has(x.key))first.set(x.key,x.value);latest.set(x.key,x.value);}
