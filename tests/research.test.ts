@@ -68,3 +68,28 @@ test('field stripping distinguishes actual loss from an already invalid input an
  assert.equal(experiment('field_stripping',{...input,record:{name:'sample'}}).pre_write_validation_missed_loss,false);
  assert.throws(()=>experiment('field_stripping',{...input,required_fields:['__proto__']}),/invalid/);
 });
+
+test('both live malformed experiment requests execute once with recorded local normalization',async()=>{
+ for(const wrapped of [false,true]){
+ const x=fixture(),now=Date.now();try{
+ const start=await runResearch(x.store,decide('start',null,{title:'Field stripping regression',question:'Can a simulated write remove fields after successful validation?'}),now);
+ const fixtureInput={record:{name:'sample',version:2},allowed_fields:['name'],required_fields:['name','version']};
+ let calls=0;
+ const result=await runResearch(x.store,async(_cfg,_task,text)=>{calls++;const c=JSON.parse(text),tool=c.tools.find((t:any)=>t.action==='experiment');assert.equal(tool.args.recipe.type,'string');assert.equal(tool.args.input.type,'object');return decide('experiment',start.created,{recipe:['field_stripping'],input:wrapped?{field_stripping:fixtureInput}:fixtureInput})();},now+3600001);
+ assert.equal(result.completed,true);assert.equal(calls,1);
+ const receipts=researchSnapshot(x.store).artifacts;assert.equal(receipts.length,1);const receipt=JSON.parse(String(receipts[0].body));assert.deepEqual(receipt.input,fixtureInput);assert.equal(receipt.recipe,'field_stripping');assert.equal(receipt.result.pre_write_validation_missed_loss,true);assert.deepEqual(receipt.normalizations,wrapped?['single_recipe_array_unwrapped','recipe_input_wrapper_removed']:['single_recipe_array_unwrapped']);
+ }finally{x.close();}
+ }
+});
+test('ambiguous recipes and malformed inputs fail precisely and inform the next decision',async()=>{
+ const {experimentArguments}=await import('../src/research.ts');
+ for(const recipe of [[],['field_stripping','memory_conflicts'],'invented_recipe',[['field_stripping']]])assert.throws(()=>experimentArguments({recipe,input:{}}),/research_invalid_recipe/);
+ for(const input of [null,[],{field_stripping:null}])assert.throws(()=>experimentArguments({recipe:'field_stripping',input}),/research_invalid_experiment_input/);
+ const x=fixture(),now=Date.now();try{
+ const start=await runResearch(x.store,decide('start',null,{title:'Invalid recipe regression',question:'Can invalid tool requests produce actionable feedback?'}),now);
+ let effects=0;
+ const bad=await runResearch(x.store,decide('experiment',start.created,{recipe:['field_stripping','memory_conflicts'],input:{}}),now+3600001,{experiment:async()=>{effects++;throw Error('should not execute');}});
+ assert.equal(bad.error_code,'research_invalid_recipe');assert.equal(effects,0);
+ await runResearch(x.store,async(_cfg,_task,text)=>{assert.match(text,/must be one registered recipe name as a string/);return decide('wait',null,{})();},now+7200002);
+ }finally{x.close();}
+});
