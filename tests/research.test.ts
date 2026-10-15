@@ -93,3 +93,17 @@ test('ambiguous recipes and malformed inputs fail precisely and inform the next 
  await runResearch(x.store,async(_cfg,_task,text)=>{assert.match(text,/must be one registered recipe name as a string/);return decide('wait',null,{})();},now+7200002);
  }finally{x.close();}
 });
+
+test('one-time five-attempt test allowance preserves history and original normal resumption',async()=>{
+ const {grantResearchTestAllowance}=await import('../src/research.ts');const x=fixture(),now=Date.parse('2026-10-15T12:54:05Z');
+ try{
+ for(let i=0;i<4;i++)await runResearch(x.store,decide('wait',null,{}),now+i*3600001);
+ const grantAt=Date.parse('2026-10-15T16:15:00Z');
+ assert.equal(grantResearchTestAllowance(x.store,grantAt).test_attempts_remaining,5);
+ assert.throws(()=>grantResearchTestAllowance(x.store,grantAt),/already_granted/);
+ for(let i=0;i<5;i++){const at=grantAt+i*3600001;assert.equal((await runResearch(x.store,decide('wait',null,{}),at)).completed,true);if(i<4)assert.equal((await runResearch(x.store,decide('wait',null,{}),at+1)).skipped,true);}
+ assert.equal((await runResearch(x.store,decide('wait',null,{}),grantAt+5*3600001)).skipped,true);
+ const state=researchSnapshot(x.store,Date.parse('2026-10-15T21:01:00Z'));assert.equal(state.runs.length,9);assert.equal(state.next_eligible_at,now+86400000);assert.equal(state.test_attempts_remaining,0);
+ assert.equal((await runResearch(x.store,decide('wait',null,{}),now+86400001)).completed,true);
+ }finally{x.close();}
+});
