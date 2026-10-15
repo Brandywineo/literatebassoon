@@ -41,6 +41,8 @@ export function openStore(dir: string) {
   db.exec('BEGIN IMMEDIATE');
   column('kestrel_reflections','evidence_hash','TEXT');
   column('kestrel_reflections','finished_at','INTEGER');
+  column('kestrel_reflections','model_output','TEXT');
+  column('kestrel_reflections','evidence_snapshot','TEXT');
   function column(table:string,name:string,definition:string) {
     if(!db.prepare(`PRAGMA table_info(${table})`).all().some(c=>c.name===name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }

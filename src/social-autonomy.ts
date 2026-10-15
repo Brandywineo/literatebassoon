@@ -14,7 +14,7 @@ type Store=ReturnType<typeof openStore>;
 export function autonomyStatus(store:Store,now=Date.now()){
  expireChallenges(store,now);
  const row=store.db.prepare('SELECT * FROM social_autonomy WHERE id=1').get()!;
- const blocked=store.db.prepare("SELECT status FROM social_replies WHERE status IN ('SENDING','UNCERTAIN','PENDING_VERIFICATION','VERIFYING','SOLVING') AND NOT (status='UNCERTAIN' AND EXISTS(SELECT 1 FROM social_visibility v WHERE v.reply_id=social_replies.id AND v.visibility='VISIBLE' AND v.error_code IS NULL AND v.checked_at>=?)) LIMIT 1").get(now-3600000)?.status;
+ const blocked=store.db.prepare("SELECT status FROM social_replies WHERE status IN ('SENDING','UNCERTAIN','PENDING_VERIFICATION','VERIFYING','SOLVING') AND NOT (status='UNCERTAIN' AND EXISTS(SELECT 1 FROM social_visibility v WHERE v.reply_id=social_replies.id AND v.visibility='VISIBLE' AND v.error_code IS NULL AND v.checked_at>=?)) LIMIT 1").get(now-3600000)?.status||store.db.prepare("SELECT status FROM moltbook_publications WHERE status IN ('SENDING','UNCERTAIN','PENDING_VERIFICATION','VERIFYING','SOLVING') LIMIT 1").get()?.status;
  const writes=store.db.prepare('SELECT count(*) AS n,min(attempted_at) AS first,max(attempted_at) AS last FROM social_replies WHERE attempted_at>=?').get(now-86400000)!;
  const generations=store.db.prepare('SELECT count(*) AS n,min(started_at) AS first FROM social_generation WHERE started_at>=?').get(now-86400000)!;
  const solver=store.db.prepare('SELECT count(*) AS n FROM social_verification_attempts WHERE started_at>=?').get(now-86400000)!;

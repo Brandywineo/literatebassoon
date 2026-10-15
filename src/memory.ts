@@ -1,3 +1,4 @@
+import {privateDraft} from './social-quality.ts';
 import {recordGuidance,learningMetrics} from './learning-metrics.ts';
 import {syncRelationships,relationshipSnapshot,relationshipContext} from './relationships.ts';
 import {createHash} from 'node:crypto';
@@ -124,18 +125,22 @@ export async function reflectOnMemory(store:Store,generateText:typeof import('./
   if(store.db.prepare("SELECT id FROM kestrel_reflections WHERE status='RUNNING' LIMIT 1").get())return null;
   const budget=store.db.prepare('SELECT count(*) AS n,max(started_at) AS last FROM kestrel_reflections WHERE started_at>=?').get(now-86400000)!;
   if(Number(budget.n)>=2||(budget.last!=null&&now-Number(budget.last)<3600000))return null;
-  const evidence=store.db.prepare('SELECT id,kind,observation,observed_at FROM kestrel_experience ORDER BY observed_at DESC,id DESC LIMIT 20').all();
+  const recent=store.db.prepare('SELECT id,kind,observation,observed_at FROM kestrel_experience ORDER BY observed_at DESC,id DESC LIMIT 20').all();
+  const latestFailure=recent[0]&&/^reply_|^decision_/.test(String(recent[0].kind))?recent[0]:undefined;
+  const evidence=latestFailure?recent.filter(e=>e.kind===latestFailure.kind):recent;
+  const focus=latestFailure?String(latestFailure.kind):'latest recorded operational outcomes';
   if(!evidence.length)return null;
   const hash=createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
   const prior=store.db.prepare('SELECT status FROM kestrel_reflections WHERE evidence_hash=?').all(hash);
   if(prior.some(r=>r.status==='COMPLETED')||prior.length>=2)return null;
   const count=Number(store.db.prepare('SELECT count(*) AS n FROM kestrel_experience').get()?.n);
   const id=crypto.randomUUID();store.db.prepare("INSERT INTO kestrel_reflections(id,started_at,status,evidence_count,evidence_hash) VALUES(?,?,'RUNNING',?,?)").run(id,now,count,hash);
-  return {id,evidence,current:store.db.prepare('SELECT topic,lesson,evidence FROM kestrel_insights').all()};
+  return {id,evidence,focus,current:store.db.prepare('SELECT topic,lesson,evidence FROM kestrel_insights').all().filter(h=>{try{return JSON.parse(String(h.evidence)).some((id:string)=>evidence.some(e=>e.id===id));}catch{return false;}})};
  });
  if(!payload)return {skipped:true};
  try{
-  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({evidence:payload.evidence.map((e,i)=>({...e,id:i+1})),current_hypotheses:payload.current.map(h=>({topic:h.topic,lesson:h.lesson})),guidance_outcomes:learningMetrics(store).slice(0,5).map(m=>({type:m.type,key:m.key,version:m.version,uses:m.uses,generation_failed:m.generation_failed,visible:m.visible,verified:m.verified,failures:m.failures})),outcome_limitations:'Associations after retrieved guidance, not causal evidence of improvement. Counts can overlap across lessons.',assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
+  const result=await generateText({provider:cfg.provider,model:cfg.model,ollamaUrl:process.env.OLLAMA_URL,openaiKey:process.env.OPENAI_API_KEY},'social-learning',JSON.stringify({reflection_focus:payload.focus,evidence:payload.evidence.map((e,i)=>({...e,id:i+1})),current_hypotheses:payload.current.map(h=>({topic:h.topic,lesson:h.lesson})),guidance_outcomes:learningMetrics(store).slice(0,5).map(m=>({type:m.type,key:m.key,version:m.version,uses:m.uses,generation_failed:m.generation_failed,visible:m.visible,verified:m.verified,failures:m.failures})),outcome_limitations:'Associations after retrieved guidance, not causal evidence of improvement. Counts can overlap across lessons.',assessment:store.db.prepare('SELECT topic,status,reason FROM kestrel_insight_checks').all()}));
+  store.db.prepare('UPDATE kestrel_reflections SET model_output=?,evidence_snapshot=? WHERE id=?').run(privateDraft(result.text),JSON.stringify(payload.evidence),payload.id);
   let parsed:any;try{parsed=JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/,'$1'));}catch{throw Error('reflection_invalid_json');}
   const topics=['reply_quality','source_freshness','delivery_verification','generation_reliability','agent_operations'];
   if(!parsed||Object.keys(parsed).length!==1||!Array.isArray(parsed.lessons)||parsed.lessons.length>4)throw Error('reflection_invalid_shape');

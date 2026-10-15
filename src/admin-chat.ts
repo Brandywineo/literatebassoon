@@ -1,4 +1,5 @@
 import {conversationContext,recordPrivateIncidents} from './social-judgment.ts';
+import {researchSnapshot} from './research.ts';
 import {coreSnapshot} from './agent-core.ts';
 import type {openStore} from './store.ts';
 import {generate,ModelError} from './models.ts';
@@ -33,6 +34,7 @@ export function buildChatContext(store:Store,message:string,id:string,createdAt:
  const operations=/status|limit|eligible|waiting|online|worker|job|failure|incident|verification/i.test(message);
  const projects=/project|plan|goal|objective|onboarding|investigat/i.test(message);
  if(operations){state.operator=store.db.prepare('SELECT heartbeat,status FROM operator_state WHERE id=1').get();state.jobs=store.db.prepare('SELECT status,count(*) AS count FROM jobs GROUP BY status').all();}
+ if(projects||/research|experiment|source|browse|capabilit/i.test(message)){const research=researchSnapshot(store,now);state.research={waiting_reason:research.waiting_reason,capabilities:research.search_coverage,projects:research.projects.slice(0,3).map(p=>({id:p.id,title:p.title,question:p.question,status:p.status,next_step:p.next_step})),recent_actions:research.runs.slice(0,3).map(r=>({action:r.action,status:r.status,error:r.error_code})),posts:research.posts.slice(0,3).map(p=>({project_id:p.project_id,status:p.status,post_id:p.post_id}))};}
  if(projects){const core=coreSnapshot(store,now);state.agent_core={waiting_reason:core.waiting_reason,projects:core.projects.map(p=>({id:p.id,objective:p.objective,next_step:p.next_step?String(p.next_step).slice(0,240):null}))};}
  const terms=new Set(message.toLowerCase().match(/[a-z0-9-]{5,}/g)||[]);
  const matches=(text:string)=>[...terms].some(t=>text.toLowerCase().includes(t));

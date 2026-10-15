@@ -15,7 +15,7 @@ export function verifyBackup(path:string){
  const db=new DatabaseSync(resolve(path),{readOnly:true});try{
  const integrity=db.prepare('PRAGMA integrity_check').all();if(integrity.some(r=>r.integrity_check!=='ok'))throw Error('Backup integrity check failed');
  if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Backup foreign-key check failed');
- const counts:Record<string,number>={};for(const table of ['agents','jobs','ledger','kestrel_projects','kestrel_tasks','kestrel_experience','social_replies','social_generation'])if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))counts[table]=Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
+ const counts:Record<string,number>={};for(const table of ['agents','jobs','ledger','kestrel_projects','kestrel_tasks','kestrel_experience','social_replies','social_generation','research_projects','research_artifacts','research_runs','research_posts'])if(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))counts[table]=Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
  return {integrity:'ok',counts,limitations:'Database only. Keep private environment, Moltbook identity and encrypted wallet custody backups separately. Never run a restored copy alongside production.'};
  }finally{db.close();}
 }
