@@ -7,13 +7,13 @@ export function publicAddress(ip:string){
  return isIP(ip)===6&&/^[23][0-9a-f]{3}:/i.test(ip)&&!/^2001:(?:db8|0|10|20|2):/i.test(ip)&&!/^2002:/i.test(ip);
 }
 export function publicURL(raw:string){
- const u=new URL(raw);if(raw.length>1500||u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||u.search.length>300||/localhost|\.local$|\.internal$|\.localhost$/i.test(u.hostname))throw Error('research_url_rejected');
+ let u:URL;try{u=new URL(raw);}catch{throw Error('research_url_rejected');}if(!u.hostname.includes('.')||/\.(?:example|invalid|test)$/i.test(u.hostname))throw Error('research_placeholder_url');if(raw.length>1500||u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||u.search.length>300||/localhost|\.local$|\.internal$|\.localhost$/i.test(u.hostname))throw Error('research_url_rejected');
  if(isIP(u.hostname.replace(/^\[|\]$/g,'')))throw Error('research_ip_url_rejected');
  if(/(?:key|token|secret|password|auth|signature|credential)=/i.test(u.search))throw Error('research_sensitive_url');return u;
 }
 // DNS is checked AND pinned to the validated address on every redirect. No host credentials.
 export async function readPublic(raw:string,redirects=0,network:{lookup?:typeof lookup;get?:typeof https.get}={}):Promise<{url:string;type:string;body:string}>{
- const u=publicURL(raw),addresses=await (network.lookup||lookup)(u.hostname,{all:true});
+ const u=publicURL(raw);let addresses:Awaited<ReturnType<typeof lookup>>|any;let dnsTimer:ReturnType<typeof setTimeout>|undefined;try{addresses=await Promise.race([(network.lookup||lookup)(u.hostname,{all:true}),new Promise((_,reject)=>{dnsTimer=setTimeout(()=>reject(Error('research_dns_timeout')),5000);})]);}catch(e){if(e instanceof Error&&e.message==='research_dns_timeout')throw e;throw Error('research_dns_failed');}finally{clearTimeout(dnsTimer);}
  if(!addresses.length||addresses.some(a=>!publicAddress(a.address)))throw Error('research_private_network');
  return new Promise((resolve,reject)=>{
   const address=addresses[0];const req=(network.get||https.get)(u,{headers:{'User-Agent':'KestrelField research reader/1.0','Accept':'text/html,text/plain,application/json','Accept-Encoding':'identity'},lookup:((_host:any,options:any,callback:any)=>options.all?callback(null,[address]):callback(null,address.address,address.family)) as any},response=>{

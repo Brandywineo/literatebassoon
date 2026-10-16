@@ -30,6 +30,7 @@ test('registered experiments run in an isolated worker and preserve explicit lim
 test('autonomous project persists source and experiment receipts and publishes once without admin approval',async()=>{
  const x=fixture(),now=Date.now();try{
  const started=await runResearch(x.store,decide('start',null,{title:'Idempotency receipt experiment',question}),now);assert.equal(started.completed,true);const id=started.created;
+ saveArtifact(x.store,String(id),'SEARCH',{results:[{url:'https://example.com/idempotency'}]},now);
  let model=0;await runResearch(x.store,async()=>{model++;throw Error();},now+1);assert.equal(model,0);
  await runResearch(x.store,decide('read',id,{url:'https://example.com/idempotency'}),now+3600001,{read:async(url:string)=>({url,type:'text/plain',body:quote})});
  await runResearch(x.store,decide('experiment',id,{recipe:'idempotency_replay',input}),now+7200002);
@@ -37,7 +38,7 @@ test('autonomous project persists source and experiment receipts and publishes o
  let posts=0;const fetcher:any=async(url:string,opts:any)=>{if(url.endsWith('/agents/status'))return Response.json({status:'claimed'});assert.ok(url.endsWith('/posts'));posts++;const post=JSON.parse(opts.body);assert.match(post.content,/duplicate_suppressed/);assert.match(post.content,/not a production benchmark/);assert.ok(!post.content.includes('secret-test'));return Response.json({post:{id:'research-post',verification_status:'verified'}});};
  const sent=await runResearch(x.store,decide('publish',id,{source_id:source.id,experiment_id:receipt.id,quote}),now+10800003,{path:x.path,fetcher});assert.equal(sent.status,'PUBLISHED');assert.equal(posts,1);assert.equal(researchSnapshot(x.store,now+10800003).posts[0].status,'PUBLISHED');
  assert.equal((await runResearch(x.store,decide('wait',null,{}),now+14400004)).skipped,true);
- const reopened=openStore(x.dir);try{assert.equal(researchSnapshot(reopened,now+14400004).projects[0].status,'REPORTED');assert.equal(researchSnapshot(reopened).artifacts.length,2);}finally{reopened.db.close();}
+ const reopened=openStore(x.dir);try{assert.equal(researchSnapshot(reopened,now+14400004).projects[0].status,'REPORTED');assert.equal(researchSnapshot(reopened).artifacts.length,3);}finally{reopened.db.close();}
  }finally{x.close();}
 });
 test('bad decisions consume persistent budget but cannot execute unknown tools or leak exception text',async()=>{const x=fixture(),now=Date.now();try{const result=await runResearch(x.store,decide('run_shell',null,{command:'anything'}),now);assert.equal(result.error_code,'research_invalid_decision');assert.equal(researchSnapshot(x.store,now).runs.length,1);assert.equal((await runResearch(x.store,async()=>{throw Error('private provider error');},now+3600001)).error_code,'research_tool_or_model_failed');assert.ok(!JSON.stringify(researchSnapshot(x.store)).includes('private provider error'));}finally{x.close();}});
@@ -106,4 +107,24 @@ test('one-time five-attempt test allowance preserves history and original normal
  const state=researchSnapshot(x.store,Date.parse('2026-10-15T21:01:00Z'));assert.equal(state.runs.length,9);assert.equal(state.next_eligible_at,now+86400000);assert.equal(state.test_attempts_remaining,0);
  assert.equal((await runResearch(x.store,decide('wait',null,{}),now+86400001)).completed,true);
  }finally{x.close();}
+});
+
+test('research discovers real sources and remembers failed reads without repeating network effects',async()=>{
+ const x=fixture(),now=Date.now();try{
+ const start=await runResearch(x.store,decide('start',null,{title:'Source discovery regression',question:'Can research recover from an unavailable documentation source?'}),now);const id=String(start.created);
+ let reads=0;
+ const placeholder=await runResearch(x.store,async(_cfg,_task,text)=>{const c=JSON.parse(text);assert.equal(c.available_source_urls.length,0);assert.ok(!c.tools.some((t:any)=>t.action==='read'));assert.ok(!text.includes('https://public-source'));return decide('read',id,{url:'https://public-source'})();},now+3600001,{read:async()=>{reads++;throw Error();}});
+ assert.equal(placeholder.error_code,'research_placeholder_url');assert.equal(reads,0);
+ await runResearch(x.store,decide('search',id,{query:'API required field validation'}),now+7200002,{search:async()=>({query:'API required field validation',results:[{url:'https://docs.example.org/schema',title:'Schema documentation'}],unavailable:[],coverage:'test'})});
+ const failed=await runResearch(x.store,async(_cfg,_task,text)=>{assert.match(text,/placeholder, not a real source/);assert.match(text,/https:\/\/docs.example.org\/schema/);return decide('read',id,{url:'https://docs.example.org/schema'})();},now+10800003,{read:async()=>{reads++;throw Error('research_dns_failed');}});
+ assert.equal(failed.error_code,'research_dns_failed');
+ const repeated=await runResearch(x.store,async(_cfg,_task,text)=>{const c=JSON.parse(text);assert.equal(c.available_source_urls.length,0);assert.ok(!c.tools.some((t:any)=>t.action==='read'));assert.match(text,/research_dns_failed/);return decide('read',id,{url:'https://docs.example.org/schema'})();},now+86400001,{read:async()=>{reads++;throw Error();}});
+ assert.equal(repeated.error_code,'research_read_repeated');assert.equal(reads,1);
+ assert.equal(x.store.db.prepare("SELECT count(*) AS n FROM kestrel_experience WHERE source='research'").get()?.n,5);
+ }finally{x.close();}
+});
+test('DNS failure retains a specific safe error instead of raw resolver details',async()=>{
+ const {readPublic}=await import('../src/research-web.ts');
+ await assert.rejects(readPublic('https://docs.example.org/schema',0,{lookup:async()=>{throw Error('resolver private details');}}),/^Error: research_dns_failed$/);
+ assert.throws(()=>publicURL('https://public-source'),/research_placeholder_url/);
 });
