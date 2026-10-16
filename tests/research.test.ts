@@ -4,7 +4,7 @@ import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {openStore} from '../src/store.ts';
 import {publicAddress,publicURL,sourceText,searchPublic} from '../src/research-web.ts';
 import {experiment,runExperiment} from '../src/research-experiments.ts';
-import {runResearch,researchSnapshot,saveArtifact,researchPost} from '../src/research.ts';
+import {runResearch,researchSnapshot,saveArtifact,researchPost,researchLimits} from '../src/research.ts';
 import {reflectOnMemory,learnFromOutcomes} from '../src/memory.ts';
 const fixture=()=>{const dir=mkdtempSync('/tmp/research-'),store=openStore(dir),path=dir+'/moltbook.json';store.setOperator(true,'ollama','test',50);store.db.prepare('UPDATE social_autonomy SET enabled=1').run();writeFileSync(path,JSON.stringify({name:'KestrelField',api_key:'secret-test'}));return {dir,store,path,close(){store.db.close();rmSync(dir,{recursive:true,force:true});}};};
 const input={events:[{key:'a',payload:'first'},{key:'a',payload:'first'},{key:'a',payload:'changed'}]};
@@ -37,7 +37,8 @@ test('autonomous project persists source and experiment receipts and publishes o
  const a=researchSnapshot(x.store,now+7200002).artifacts,source=a.find(a=>a.kind==='SOURCE')!,receipt=a.find(a=>a.kind==='EXPERIMENT')!;
  let posts=0;const fetcher:any=async(url:string,opts:any)=>{if(url.endsWith('/agents/status'))return Response.json({status:'claimed'});assert.ok(url.endsWith('/posts'));posts++;const post=JSON.parse(opts.body);assert.match(post.content,/duplicate_suppressed/);assert.match(post.content,/not a production benchmark/);assert.ok(!post.content.includes('secret-test'));return Response.json({post:{id:'research-post',verification_status:'verified'}});};
  const sent=await runResearch(x.store,decide('publish',id,{source_id:source.id,experiment_id:receipt.id,quote}),now+10800003,{path:x.path,fetcher});assert.equal(sent.status,'PUBLISHED');assert.equal(posts,1);assert.equal(researchSnapshot(x.store,now+10800003).posts[0].status,'PUBLISHED');
- assert.equal((await runResearch(x.store,decide('wait',null,{}),now+14400004)).skipped,true);
+ for(let i=4;i<researchLimits.model_calls;i++)assert.equal((await runResearch(x.store,decide('wait',null,{}),now+i*3600001)).completed,true);
+ assert.equal((await runResearch(x.store,decide('wait',null,{}),now+researchLimits.model_calls*3600001)).skipped,true);
  const reopened=openStore(x.dir);try{assert.equal(researchSnapshot(reopened,now+14400004).projects[0].status,'REPORTED');assert.equal(researchSnapshot(reopened).artifacts.length,3);}finally{reopened.db.close();}
  }finally{x.close();}
 });
@@ -96,15 +97,15 @@ test('ambiguous recipes and malformed inputs fail precisely and inform the next 
 });
 
 test('one-time five-attempt test allowance preserves history and original normal resumption',async()=>{
- const {grantResearchTestAllowance}=await import('../src/research.ts');const x=fixture(),now=Date.parse('2026-10-15T12:54:05Z');
+ const {grantResearchTestAllowance}=await import('../src/research.ts');const x=fixture(),now=Date.parse('2026-10-15T08:54:05Z');
  try{
- for(let i=0;i<4;i++)await runResearch(x.store,decide('wait',null,{}),now+i*3600001);
+ for(let i=0;i<researchLimits.model_calls;i++)await runResearch(x.store,decide('wait',null,{}),now+i*3600001);
  const grantAt=Date.parse('2026-10-15T16:15:00Z');
  assert.equal(grantResearchTestAllowance(x.store,grantAt).test_attempts_remaining,5);
  assert.throws(()=>grantResearchTestAllowance(x.store,grantAt),/already_granted/);
  for(let i=0;i<5;i++){const at=grantAt+i*3600001;assert.equal((await runResearch(x.store,decide('wait',null,{}),at)).completed,true);if(i<4)assert.equal((await runResearch(x.store,decide('wait',null,{}),at+1)).skipped,true);}
  assert.equal((await runResearch(x.store,decide('wait',null,{}),grantAt+5*3600001)).skipped,true);
- const state=researchSnapshot(x.store,Date.parse('2026-10-15T21:01:00Z'));assert.equal(state.runs.length,9);assert.equal(state.next_eligible_at,now+86400000);assert.equal(state.test_attempts_remaining,0);
+ const state=researchSnapshot(x.store,Date.parse('2026-10-15T21:01:00Z'));assert.equal(state.runs.length,researchLimits.model_calls+5);assert.equal(state.next_eligible_at,now+86400000);assert.equal(state.test_attempts_remaining,0);
  assert.equal((await runResearch(x.store,decide('wait',null,{}),now+86400001)).completed,true);
  }finally{x.close();}
 });
